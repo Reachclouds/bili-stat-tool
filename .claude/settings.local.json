@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"from bili_stat.config import *; print\\('config OK'\\)\")",
+      "Bash(python -c \"from bili_stat.storage import *; print\\('storage OK'\\)\")",
+      "Bash(python -c \"from bili_stat.api import StatThread; print\\('api OK'\\)\")",
+      "Bash(python -c \"from bili_stat.excel_export import export_excel; print\\('excel_export OK'\\)\")",
+      "Bash(python -c \"from bili_stat.ui.styles import MAIN_STYLE; print\\('styles OK'\\)\")",
+      "Bash(python -c \"from bili_stat.ui.dialogs import CookieSettingsDialog, VideoSelectionDialog; print\\('dialogs OK'\\)\")",
+      "Bash(python -c \"from bili_stat.ui.main_window import main; print\\('main_window OK'\\)\")"
+    ]
+  }
+}
