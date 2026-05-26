@@ -16,3 +16,6 @@ env/
 *.swp
 *.swo
 *~
+exports/
+conversation-*.txt
+*-context-usage.txt

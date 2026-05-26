@@ -63,7 +63,35 @@ AC_TIME_VALUE = cookie_config.get("AC_TIME_VALUE", "1000")
 
 MAX_UP_COUNT = 80
 CONFIG_FILE = os.path.join(get_app_data_dir(), "up_list.json")
+SETTINGS_FILE = os.path.join(get_app_data_dir(), "settings.json")
 TIMEZONE_CN = timezone(timedelta(hours=8), "Asia/Shanghai")
+
+
+def load_role_filter_settings():
+    """加载共创角色筛选设置，返回 (enabled: bool, roles: list[str])，默认 (False, [])"""
+    if os.path.exists(SETTINGS_FILE):
+        try:
+            with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
+                s = json.load(f)
+                return s.get("role_filter_enabled", False), s.get("excluded_roles", [])
+        except:
+            pass
+    return False, []
+
+
+def save_role_filter_settings(enabled, roles):
+    """保存共创角色筛选设置到 settings.json"""
+    settings = {}
+    if os.path.exists(SETTINGS_FILE):
+        try:
+            with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
+                settings = json.load(f)
+        except:
+            pass
+    settings["role_filter_enabled"] = enabled
+    settings["excluded_roles"] = roles
+    with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
+        json.dump(settings, f, ensure_ascii=False, indent=2)
 
 RANK_LEVEL_CONFIG = [
     ("TOP1", 1, 1, "D6C7FB"),

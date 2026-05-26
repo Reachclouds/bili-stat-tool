@@ -4,6 +4,7 @@ import time
 from datetime import datetime
 from PyQt5.QtCore import QThread, pyqtSignal
 from bilibili_api import user, sync, Credential, request_settings
+from bilibili_api.video import Video
 
 from .config import TIMEZONE_CN
 from .storage import save_daily_video_data, load_daily_video_data
@@ -31,20 +32,41 @@ class StatThread(QThread):
         self.current_page = 0
         self.daily_data = load_daily_video_data()
 
+    # def _human_like_delay(self, delay_type="page"):
+    #     if delay_type == "up":
+    #         if random.random() < 0.3:
+    #             delay = random.uniform(120, 300)
+    #             self.log_signal.emit(f"  ☕ 模拟真人休息 {delay:.1f} 秒...")
+    #         else:
+    #             delay = random.uniform(30, 60)
+    #             self.log_signal.emit(f"  ↳ 切换UP主，等待 {delay:.1f} 秒...")
+    #     elif delay_type == "page":
+    #         delay = random.uniform(120, 300)
+    #         self.log_signal.emit(f"  ↳ 第 {self.current_page} 页完成，等待 {delay:.1f} 秒...")
+    #     elif delay_type == "retry":
+    #         delay = random.uniform(300, 600)
+    #         self.log_signal.emit(f"  🚨 触发风控，强制冷却 {delay:.1f} 秒后重试...")
+    #     elif delay_type == "video_info":
+    #         delay = random.uniform(5, 15)
+    #         self.log_signal.emit(f"  ↳ 获取共创信息，等待 {delay:.1f} 秒...")
+    #     time.sleep(delay)
     def _human_like_delay(self, delay_type="page"):
         if delay_type == "up":
-            if random.random() < 0.1:
-                delay = random.uniform(15, 30)
+            if random.random() < 0.3:
+                delay = random.uniform(5, 30)
                 self.log_signal.emit(f"  ☕ 模拟真人休息 {delay:.1f} 秒...")
             else:
-                delay = random.uniform(3, 12)
+                delay = random.uniform(3, 20)
                 self.log_signal.emit(f"  ↳ 切换UP主，等待 {delay:.1f} 秒...")
         elif delay_type == "page":
-            delay = random.uniform(40, 120)
+            delay = random.uniform(10, 30)
             self.log_signal.emit(f"  ↳ 第 {self.current_page} 页完成，等待 {delay:.1f} 秒...")
         elif delay_type == "retry":
-            delay = random.uniform(60, 120)
+            delay = random.uniform(300, 600)
             self.log_signal.emit(f"  🚨 触发风控，强制冷却 {delay:.1f} 秒后重试...")
+        elif delay_type == "video_info":
+            delay = random.uniform(5, 15)
+            self.log_signal.emit(f"  ↳ 获取共创信息，等待 {delay:.1f} 秒...")
         time.sleep(delay)
 
     def _process_video(self, video, uid, nickname, now):
@@ -57,6 +79,23 @@ class StatThread(QThread):
         days_diff = (now - pub_time).days
 
         excluded = self.daily_data.get(bvid, {}).get("excluded", False)
+
+        attr = video.get("attribute", 0)
+        is_collaborative = (attr >> 24) & 1 == 1
+        collab_role = ""
+        if is_collaborative:
+            staff_list = video.get("staff", [])
+            if not staff_list:
+                try:
+                    info = sync(Video(bvid).get_info())
+                    staff_list = info.get("staff", [])
+                    self._human_like_delay(delay_type="video_info")
+                except Exception:
+                    staff_list = []
+            for s in staff_list:
+                if s.get("mid") == uid:
+                    collab_role = s.get("title", "")
+                    break
 
         if days_diff >= 7:
             if bvid in self.daily_data:
@@ -73,7 +112,9 @@ class StatThread(QThread):
                     "pub_time": pub_time.strftime("%Y-%m-%d %H:%M"),
                     "bvid": bvid, "final_play": current_play,
                     "stat_days": stat_days, "status": play_tag,
-                    "excluded": excluded
+                    "excluded": excluded,
+                    "is_collaborative": is_collaborative,
+                    "collab_role": collab_role,
                 }
         else:
             play_raw = video.get("play", 0)
@@ -85,14 +126,18 @@ class StatThread(QThread):
                 "pub_time": pub_time.strftime("%Y-%m-%d %H:%M"),
                 "bvid": bvid, "final_play": current_play,
                 "stat_days": stat_days, "status": play_tag,
-                "excluded": excluded
+                "excluded": excluded,
+                "is_collaborative": is_collaborative,
+                "collab_role": collab_role,
             }
 
         return {
             "uid": uid, "nickname": nickname, "title": title, "bvid": bvid,
             "pub_time": pub_time.strftime("%Y-%m-%d %H:%M"),
             "current_play": current_play, "stat_days": stat_days,
-            "play_tag": play_tag
+            "play_tag": play_tag,
+            "is_collaborative": is_collaborative,
+            "collab_role": collab_role,
         }
 
     def run(self):

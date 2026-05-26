@@ -26,8 +26,6 @@ Requires: Python 3.12+, PyQt5, openpyxl, bilibili-api
 - **ui/dialogs.py** — `CookieSettingsDialog`（修改Cookie）、`VideoSelectionDialog`（筛选/排除视频）。
 - **ui/main_window.py** — `BiliStatTool` 主窗口，`main()` 函数包含启动逻辑和全局异常钩子。
 
-原文件 `B站统计工具.py` 是重构前的备份，不参与运行。
-
 ## Key Data Flow
 
 1. 用户配置UP主列表 → 保存到 `~/.BiliStatTool/up_list.json`

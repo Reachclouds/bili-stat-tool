@@ -68,6 +68,10 @@ def load_daily_video_data():
                 for bvid, v in data.items():
                     if "excluded" not in v:
                         v["excluded"] = False
+                    if "is_collaborative" not in v:
+                        v["is_collaborative"] = False
+                    if "collab_role" not in v:
+                        v["collab_role"] = ""
                 return data
         except:
             return {}

@@ -9,7 +9,8 @@ from datetime import datetime
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QLabel, QLineEdit, QPushButton, QDateEdit, QTableWidget,
                              QTableWidgetItem, QHeaderView, QMessageBox, QTextEdit,
-                             QGroupBox, QSplitter, QDialog)
+                             QGroupBox, QSplitter, QDialog, QCheckBox, QListWidget,
+                             QListWidgetItem, QMenu, QAction, QAbstractItemView)
 from PyQt5.QtCore import QDate, Qt
 from PyQt5.QtGui import QFont
 
@@ -34,7 +35,7 @@ class BiliStatTool(QMainWindow):
 
     def init_ui(self):
         self.setWindowTitle("B站UP主7天播放量统计工具")
-        self.setGeometry(100, 100, 1500, 850)
+        self.setGeometry(100, 100, 1400, 880)
         self.setStyleSheet(MAIN_STYLE)
         mw = QWidget()
         self.setCentralWidget(mw)
@@ -43,22 +44,26 @@ class BiliStatTool(QMainWindow):
         ml.setContentsMargins(15, 15, 15, 15)
 
         cg = QGroupBox("统计配置")
-        cl = QHBoxLayout(cg)
-        cl.addWidget(QLabel("开始日期："))
+        cvl = QVBoxLayout(cg)
+        cvl.setSpacing(10)
+        row1 = QHBoxLayout()
+        row1.addWidget(QLabel("开始日期："))
         self.sd = QDateEdit(QDate.currentDate().addDays(-7))
         self.sd.setDisplayFormat("yyyy-MM-dd")
         self.sd.setCalendarPopup(True)
-        cl.addWidget(self.sd)
-        cl.addWidget(QLabel("结束日期："))
+        self.sd.setFixedWidth(130)
+        row1.addWidget(self.sd)
+        row1.addWidget(QLabel("结束日期："))
         self.ed = QDateEdit(QDate.currentDate())
         self.ed.setDisplayFormat("yyyy-MM-dd")
         self.ed.setCalendarPopup(True)
-        cl.addWidget(self.ed)
+        self.ed.setFixedWidth(130)
+        row1.addWidget(self.ed)
 
         self.stb = QPushButton("开始统计")
         self.stb.setFixedSize(120, 38)
         self.stb.clicked.connect(self.start_stat)
-        cl.addWidget(self.stb)
+        row1.addWidget(self.stb)
 
         self.spb = QPushButton("停止统计")
         self.spb.setFixedSize(120, 38)
@@ -66,32 +71,10 @@ class BiliStatTool(QMainWindow):
         self.spb.setStyleSheet(self.spb.styleSheet())
         self.spb.clicked.connect(self.stop_stat)
         self.spb.setEnabled(False)
-        cl.addWidget(self.spb)
+        row1.addWidget(self.spb)
+        row1.addStretch()
+        cvl.addLayout(row1)
 
-        self.exb = QPushButton("导出Excel")
-        self.exb.setFixedSize(120, 38)
-        self.exb.clicked.connect(self.export_excel)
-        self.exb.setEnabled(False)
-        cl.addWidget(self.exb)
-
-        self.fib = QPushButton("筛选作品")
-        self.fib.setFixedSize(120, 38)
-        self.fib.clicked.connect(self.open_filter_dialog)
-        self.fib.setEnabled(False)
-        cl.addWidget(self.fib)
-
-        self.seb = QPushButton("Cookie设置")
-        self.seb.setFixedSize(120, 38)
-        self.seb.setProperty("cssClass", "secondary")
-        self.seb.clicked.connect(self.open_settings)
-        cl.addWidget(self.seb)
-
-        self.heb = QPushButton("使用帮助")
-        self.heb.setFixedSize(120, 38)
-        self.heb.setProperty("cssClass", "secondary")
-        self.heb.clicked.connect(self.open_help)
-        cl.addWidget(self.heb)
-        cl.addStretch()
         ml.addWidget(cg)
 
         sp = QSplitter(Qt.Horizontal)
@@ -129,20 +112,39 @@ class BiliStatTool(QMainWindow):
         bbl.addWidget(self.cb)
         bal.addLayout(bbl)
         upl.addLayout(bal)
-        upl.addWidget(QLabel("已添加UP主："))
-        self.ult = QTextEdit()
-        self.ult.setReadOnly(True)
+        upl.addWidget(QLabel("已添加UP主（右键删除）："))
+        self.ult = QListWidget()
+        self.ult.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.ult.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.ult.customContextMenuRequested.connect(self.on_up_list_context_menu)
+        self.ult.itemDoubleClicked.connect(self.on_up_item_double_clicked)
         upl.addWidget(self.ult)
-        upw.setFixedWidth(420)
+        upw.setFixedWidth(380)
         sp.addWidget(upw)
 
         daw = QWidget()
         dal = QVBoxLayout(daw)
         dal.setContentsMargins(0, 0, 0, 0)
-        dal.addWidget(QLabel("视频7天播放量统计详情："))
+        dal.setSpacing(8)
+
+        ttl = QHBoxLayout()
+        ttl.addWidget(QLabel("视频7天播放量统计详情："))
+        ttl.addStretch()
+        self.exb = QPushButton("导出Excel")
+        self.exb.setFixedSize(120, 34)
+        self.exb.clicked.connect(self.export_excel)
+        self.exb.setEnabled(False)
+        ttl.addWidget(self.exb)
+        self.fib = QPushButton("筛选作品")
+        self.fib.setFixedSize(120, 34)
+        self.fib.clicked.connect(self.open_filter_dialog)
+        self.fib.setEnabled(False)
+        ttl.addWidget(self.fib)
+        dal.addLayout(ttl)
+
         self.vt = QTableWidget()
-        self.vt.setColumnCount(7)
-        self.vt.setHorizontalHeaderLabels(["UP主昵称", "视频标题", "BV号", "发布时间", "7天播放量", "统计天数", "状态"])
+        self.vt.setColumnCount(8)
+        self.vt.setHorizontalHeaderLabels(["UP主昵称", "视频标题", "BV号", "发布时间", "7天播放量", "统计天数", "状态", "共创角色"])
         self.vt.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.vt.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
         self.vt.setEditTriggers(QTableWidget.NoEditTriggers)
@@ -153,6 +155,20 @@ class BiliStatTool(QMainWindow):
         self.logt.setReadOnly(True)
         self.logt.setFixedHeight(150)
         dal.addWidget(self.logt)
+
+        sbl = QHBoxLayout()
+        sbl.addStretch()
+        self.seb = QPushButton("Cookie设置")
+        self.seb.setFixedSize(110, 32)
+        self.seb.setProperty("cssClass", "secondary")
+        self.seb.clicked.connect(self.open_settings)
+        sbl.addWidget(self.seb)
+        self.heb = QPushButton("使用帮助")
+        self.heb.setFixedSize(110, 32)
+        self.heb.setProperty("cssClass", "secondary")
+        self.heb.clicked.connect(self.open_help)
+        sbl.addWidget(self.heb)
+        dal.addLayout(sbl)
         sp.addWidget(daw)
         ml.addWidget(sp)
 
@@ -175,6 +191,9 @@ class BiliStatTool(QMainWindow):
                 with open(CONFIG_FILE, "r", encoding="utf-8") as f:
                     self.up_list = json.load(f)
                 self.up_list = [u for u in self.up_list if u.get("uid") and u.get("nickname")]
+                for u in self.up_list:
+                    if "enabled" not in u:
+                        u["enabled"] = True
                 self.refresh_up_list_text()
             except:
                 self.up_list = []
@@ -183,11 +202,30 @@ class BiliStatTool(QMainWindow):
         with open(CONFIG_FILE, "w", encoding="utf-8") as f:
             json.dump(self.up_list, f, ensure_ascii=False, indent=2)
 
+    def on_up_item_changed(self, item):
+        idx = item.data(Qt.UserRole)
+        if idx is None or idx >= len(self.up_list):
+            return
+        self.up_list[idx]["enabled"] = (item.checkState() == Qt.Checked)
+        self.save_up_list()
+
+    def on_up_item_double_clicked(self, item):
+        new_state = item.checkState() != Qt.Checked
+        item.setCheckState(Qt.Checked if new_state else Qt.Unchecked)
+
     def refresh_up_list_text(self):
-        t = ""
+        try:
+            self.ult.itemChanged.disconnect()
+        except:
+            pass
+        self.ult.clear()
         for i, u in enumerate(self.up_list, 1):
-            t += f"{i}.{u['nickname']}（UID:{u['uid']}）\n"
-        self.ult.setText(t)
+            item = QListWidgetItem(f"{i}. {u['nickname']}（UID:{u['uid']}）")
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            item.setCheckState(Qt.Checked if u.get("enabled", True) else Qt.Unchecked)
+            item.setData(Qt.UserRole, i - 1)
+            self.ult.addItem(item)
+        self.ult.itemChanged.connect(self.on_up_item_changed)
 
     def add_up(self):
         u = self.uid.text().strip()
@@ -204,7 +242,7 @@ class BiliStatTool(QMainWindow):
         if any(str(x["uid"]) == str(u) for x in self.up_list):
             QMessageBox.warning(self, "提示", "已存在")
             return
-        self.up_list.append({"uid": u, "nickname": n})
+        self.up_list.append({"uid": u, "nickname": n, "enabled": True})
         self.save_up_list()
         self.refresh_up_list_text()
         self.uid.clear()
@@ -231,7 +269,7 @@ class BiliStatTool(QMainWindow):
                 break
             if any(str(x["uid"]) == str(uid) for x in self.up_list):
                 continue
-            self.up_list.append({"uid": uid, "nickname": name})
+            self.up_list.append({"uid": uid, "nickname": name, "enabled": True})
             c += 1
         if c > 0:
             self.save_up_list()
@@ -248,9 +286,34 @@ class BiliStatTool(QMainWindow):
             self.refresh_up_list_text()
             self.log("已清空")
 
+    def on_up_list_context_menu(self, pos):
+        item = self.ult.itemAt(pos)
+        if item is None:
+            return
+        idx = item.data(Qt.UserRole)
+        if idx is None or idx >= len(self.up_list):
+            return
+        menu = QMenu(self)
+        del_action = QAction(f"删除 {self.up_list[idx]['nickname']}", self)
+        del_action.triggered.connect(lambda: self.remove_up_by_index(idx))
+        menu.addAction(del_action)
+        menu.exec_(self.ult.viewport().mapToGlobal(pos))
+
+    def remove_up_by_index(self, idx):
+        if 0 <= idx < len(self.up_list):
+            name = self.up_list[idx]["nickname"]
+            self.up_list.pop(idx)
+            self.save_up_list()
+            self.refresh_up_list_text()
+            self.log(f"已删除：{name}")
+
     def start_stat(self):
         if not self.up_list:
             QMessageBox.warning(self, "提示", "请添加UP主")
+            return
+        enabled_up_list = [u for u in self.up_list if u.get("enabled", True)]
+        if not enabled_up_list:
+            QMessageBox.warning(self, "提示", "没有启用的UP主，请在左侧列表中勾选")
             return
         sdt = self.sd.date().toPyDate()
         edt = self.ed.date().toPyDate()
@@ -269,7 +332,7 @@ class BiliStatTool(QMainWindow):
         self.stb.setEnabled(False)
         self.spb.setEnabled(True)
 
-        self.stat_thread = StatThread(self.up_list, sdt_full, edt_full, SESSDATA, BILI_JCT, BUVID3, DEDEUSERID,
+        self.stat_thread = StatThread(enabled_up_list, sdt_full, edt_full, SESSDATA, BILI_JCT, BUVID3, DEDEUSERID,
                                       AC_TIME_VALUE)
         self.stat_thread.log_signal.connect(self.log)
         self.stat_thread.table_signal.connect(self.refresh_table)
@@ -287,7 +350,7 @@ class BiliStatTool(QMainWindow):
 
     def refresh_table(self, data):
         self.vt.setRowCount(len(data))
-        keys = ["nickname", "title", "bvid", "pub_time", "current_play", "stat_days", "play_tag"]
+        keys = ["nickname", "title", "bvid", "pub_time", "current_play", "stat_days", "play_tag", "collab_role"]
         for row, item in enumerate(data):
             for col, key in enumerate(keys):
                 val = str(item.get(key, ""))
@@ -302,7 +365,7 @@ class BiliStatTool(QMainWindow):
         self.raw_video_data_backup = []
         for row in range(self.vt.rowCount()):
             data = {}
-            keys = ["nickname", "title", "bvid", "pub_time", "current_play", "stat_days", "play_tag"]
+            keys = ["nickname", "title", "bvid", "pub_time", "current_play", "stat_days", "play_tag", "collab_role"]
             for col, key in enumerate(keys):
                 item = self.vt.item(row, col)
                 data[key] = item.text() if item else ""

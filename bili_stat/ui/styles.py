@@ -92,7 +92,14 @@ QLineEdit:focus, QDateEdit:focus, QTextEdit:focus, QComboBox:focus {
 }
 QDateEdit::drop-down {
     border: none;
-    width: 24px;
+    border-left: 1px solid #c8d2e1;
+    width: 28px;
+    background: #e8edf5;
+    border-top-right-radius: 7px;
+    border-bottom-right-radius: 7px;
+}
+QDateEdit::drop-down:hover {
+    background: #5b8def;
 }
 QComboBox::drop-down {
     border: none;
@@ -119,7 +126,7 @@ QTableWidget {
     font-size: 12px;
 }
 QTableWidget::item {
-    padding: 6px 8px;
+    padding: 8px 10px;
     border-bottom: 1px solid #eef1f6;
 }
 QTableWidget::item:hover {

@@ -4,8 +4,9 @@ from PyQt5.QtWidgets import (QDialog, QFormLayout, QLineEdit, QPushButton,
                              QCheckBox, QComboBox)
 from PyQt5.QtCore import Qt
 
-from ..config import load_cookie_config, update_cookie
+from ..config import load_cookie_config, update_cookie, load_role_filter_settings, save_role_filter_settings
 from ..storage import load_daily_video_data, save_daily_video_data
+from .styles import MAIN_STYLE
 
 
 class CookieSettingsDialog(QDialog):
@@ -55,9 +56,11 @@ class VideoSelectionDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("筛选统计作品")
         self.setModal(True)
+        self.setStyleSheet(MAIN_STYLE)
         self.resize(1200, 750)
         self.current_data = current_data
         self.data_list = []
+        self.role_filter_enabled, self.excluded_roles = load_role_filter_settings()
 
         self.init_ui()
         self.load_and_refresh()
@@ -95,38 +98,109 @@ class VideoSelectionDialog(QDialog):
         up_layout.addStretch()
         layout.addLayout(up_layout)
 
-        self.table = QTableWidget()
-        self.table.setColumnCount(8)
-        self.table.setHorizontalHeaderLabels(["选择", "UP主昵称", "视频标题", "BV号", "发布时间", "7天播放量", "统计天数", "状态"])
-        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
-        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
-        self.table.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.table.setAlternatingRowColors(True)
-        layout.addWidget(self.table)
+        self.role_layout = QHBoxLayout()
+        self.role_filter_cb = QCheckBox("排除指定共创角色：")
+        self.role_filter_cb.setChecked(self.role_filter_enabled)
+        self.role_filter_cb.stateChanged.connect(self.on_role_filter_changed)
+        self.role_layout.addWidget(self.role_filter_cb)
+        self.role_placeholder = QLabel("（无共创角色）")
+        self.role_placeholder.setStyleSheet("color: #999;")
+        self.role_placeholder.setVisible(False)
+        self.role_layout.addWidget(self.role_placeholder)
+        self.role_checkboxes = []
+        self.role_layout.addStretch()
+        layout.addLayout(self.role_layout)
 
-        btn_layout = QHBoxLayout()
-        self.select_all_btn = QPushButton("全选当前显示")
-        self.select_all_btn.clicked.connect(self.select_current_visible)
-        btn_layout.addWidget(self.select_all_btn)
-
-        self.deselect_all_btn = QPushButton("全不选当前显示")
-        self.deselect_all_btn.clicked.connect(self.deselect_current_visible)
-        btn_layout.addWidget(self.deselect_all_btn)
-        btn_layout.addStretch()
+        action_layout = QHBoxLayout()
+        self.toggle_select_btn = QPushButton("全选/全不选")
+        self.toggle_select_btn.clicked.connect(self.toggle_current_visible)
+        action_layout.addWidget(self.toggle_select_btn)
+        action_layout.addStretch()
 
         cancel_btn = QPushButton("取消")
         cancel_btn.clicked.connect(self.reject)
-        btn_layout.addWidget(cancel_btn)
+        action_layout.addWidget(cancel_btn)
 
         confirm_btn = QPushButton("确认筛选并永久排除")
         confirm_btn.setProperty("cssClass", "danger")
         confirm_btn.clicked.connect(self.confirm_selection)
-        btn_layout.addWidget(confirm_btn)
-        layout.addLayout(btn_layout)
+        action_layout.addWidget(confirm_btn)
+        layout.addLayout(action_layout)
+
+        self.table = QTableWidget()
+        self.table.setColumnCount(9)
+        self.table.setHorizontalHeaderLabels(["选择", "UP主昵称", "视频标题", "BV号", "发布时间", "7天播放量", "统计天数", "状态", "共创角色"])
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.Fixed)
+        header.resizeSection(0, 50)
+        header.setSectionResizeMode(1, QHeaderView.Interactive)
+        header.resizeSection(1, 110)
+        header.setSectionResizeMode(2, QHeaderView.Stretch)
+        header.setSectionResizeMode(3, QHeaderView.Fixed)
+        header.resizeSection(3, 105)
+        header.setSectionResizeMode(4, QHeaderView.Fixed)
+        header.resizeSection(4, 90)
+        header.setSectionResizeMode(5, QHeaderView.Fixed)
+        header.resizeSection(5, 80)
+        header.setSectionResizeMode(6, QHeaderView.Fixed)
+        header.resizeSection(6, 75)
+        header.setSectionResizeMode(7, QHeaderView.Fixed)
+        header.resizeSection(7, 70)
+        header.setSectionResizeMode(8, QHeaderView.Fixed)
+        header.resizeSection(8, 75)
+        self.table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.table.setAlternatingRowColors(True)
+        self.table.cellDoubleClicked.connect(self.on_row_double_clicked)
+        layout.addWidget(self.table)
+
+
+    def on_role_filter_changed(self):
+        self.role_filter_enabled = self.role_filter_cb.isChecked()
+        for cb in self.role_checkboxes:
+            cb.setEnabled(self.role_filter_enabled)
+        self.load_and_refresh()
+
+    def _rebuild_role_checkboxes(self, roles):
+        for cb in self.role_checkboxes:
+            cb.setParent(None)
+            cb.deleteLater()
+        self.role_checkboxes = []
+
+        if not roles:
+            self.role_placeholder.setVisible(True)
+            return
+
+        self.role_placeholder.setVisible(False)
+        sorted_roles = sorted(roles)
+        for role in sorted_roles:
+            cb = QCheckBox(role)
+            cb.blockSignals(True)
+            cb.setChecked(role in self.excluded_roles)
+            cb.setEnabled(self.role_filter_enabled)
+            cb.blockSignals(False)
+            cb.stateChanged.connect(self.on_role_checkbox_changed)
+            self.role_checkboxes.append(cb)
+            self.role_layout.insertWidget(self.role_layout.count() - 1, cb)
+
+    def on_role_checkbox_changed(self):
+        self.excluded_roles = [cb.text() for cb in self.role_checkboxes if cb.isChecked()]
+        self.load_and_refresh()
 
     def load_and_refresh(self):
         self.data_list = self._get_full_data_internal()
+
+        all_roles = set()
+        for item in self.data_list:
+            role = item.get("data", {}).get("collab_role", "")
+            if role:
+                all_roles.add(role)
+        self._rebuild_role_checkboxes(all_roles)
+
+        if self.role_filter_enabled and self.excluded_roles:
+            for item in self.data_list:
+                role = item.get("data", {}).get("collab_role", "")
+                if role and role in self.excluded_roles:
+                    item["selected"] = False
 
         self.up_combo.blockSignals(True)
         self.up_combo.clear()
@@ -141,7 +215,8 @@ class VideoSelectionDialog(QDialog):
                 key = (uid, nick)
                 if key not in up_set:
                     up_set.add(key)
-                    self.up_combo.addItem(f"{nick}（UID:{uid}）", key)
+                    count = sum(1 for item in self.data_list if item.get("data", {}).get("uid", 0) == uid)
+                    self.up_combo.addItem(f"{nick}（UID:{uid}）- {count}个视频", key)
 
         self.up_combo.blockSignals(False)
         self.refresh_table_view()
@@ -186,6 +261,8 @@ class VideoSelectionDialog(QDialog):
                     "current_play": v.get("final_play", 0),
                     "stat_days": v.get("stat_days", 7),
                     "play_tag": v.get("status", "已结算"),
+                    "is_collaborative": v.get("is_collaborative", False),
+                    "collab_role": v.get("collab_role", ""),
                 },
                 "selected": not is_excluded,
                 "source_bvid": bvid
@@ -242,7 +319,8 @@ class VideoSelectionDialog(QDialog):
                 d.get("pub_time", ""),
                 str(d.get("current_play", 0)),
                 str(d.get("stat_days", 0)),
-                d.get("play_tag", "")
+                d.get("play_tag", ""),
+                d.get("collab_role", ""),
             ]
             for c, text in enumerate(cols):
                 ti = QTableWidgetItem(text)
@@ -264,29 +342,45 @@ class VideoSelectionDialog(QDialog):
         except Exception as e:
             pass
 
-    def select_current_visible(self):
-        current_up = self.up_combo.currentData()
-        for item in self.data_list:
-            d = item.get("data", {})
-            if current_up is not None:
-                target_uid, _ = current_up
-                if d.get("uid", 0) != target_uid:
-                    continue
-            item["selected"] = True
-        self.refresh_table_view()
+    def on_row_double_clicked(self, row, col):
+        if col == 0:
+            return
+        chk_item = self.table.item(row, 0)
+        if chk_item is None:
+            return
+        original_idx = chk_item.data(Qt.UserRole)
+        if original_idx is None or not (0 <= original_idx < len(self.data_list)):
+            return
+        new_state = not self.data_list[original_idx].get("selected", True)
+        self.data_list[original_idx]["selected"] = new_state
+        chk_item.setCheckState(Qt.Checked if new_state else Qt.Unchecked)
+        self.table.clearFocus()
 
-    def deselect_current_visible(self):
+    def toggle_current_visible(self):
         current_up = self.up_combo.currentData()
+        all_selected = True
         for item in self.data_list:
             d = item.get("data", {})
             if current_up is not None:
                 target_uid, _ = current_up
                 if d.get("uid", 0) != target_uid:
                     continue
-            item["selected"] = False
+            if not item.get("selected", True):
+                all_selected = False
+                break
+
+        new_state = not all_selected
+        for item in self.data_list:
+            d = item.get("data", {})
+            if current_up is not None:
+                target_uid, _ = current_up
+                if d.get("uid", 0) != target_uid:
+                    continue
+            item["selected"] = new_state
         self.refresh_table_view()
 
     def confirm_selection(self):
+        save_role_filter_settings(self.role_filter_enabled, self.excluded_roles)
         daily = load_daily_video_data()
         for item in self.data_list:
             bvid = item.get("source_bvid", "") or item.get("data", {}).get("bvid", "")
