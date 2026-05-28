@@ -165,6 +165,7 @@ class VideoSelectionDialog(QDialog):
         full = []
         seen_bvids = set()
         show_excluded = self.show_excluded_check.isChecked()
+        current_bvids = {item.get("bvid", "") for item in self.current_data if item.get("bvid")}
 
         for v in daily.values():
             bvid = v.get("bvid", "")
@@ -172,7 +173,9 @@ class VideoSelectionDialog(QDialog):
                 continue
 
             is_excluded = v.get("excluded", False)
-            if not show_excluded and is_excluded:
+            if is_excluded and bvid in current_bvids:
+                pass
+            elif not show_excluded and is_excluded:
                 continue
 
             seen_bvids.add(bvid)

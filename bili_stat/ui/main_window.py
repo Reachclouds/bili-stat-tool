@@ -300,6 +300,7 @@ class BiliStatTool(QMainWindow):
     def stat_finish(self, rank_data):
         self.final_rank_data = rank_data
         self.raw_video_data_backup = []
+        daily = load_daily_video_data()
         for row in range(self.vt.rowCount()):
             data = {}
             keys = ["nickname", "title", "bvid", "pub_time", "current_play", "stat_days", "play_tag"]
@@ -321,6 +322,8 @@ class BiliStatTool(QMainWindow):
             except:
                 data["current_play"] = 0
                 data["stat_days"] = 0
+            bvid = data.get("bvid", "")
+            data["excluded"] = daily.get(bvid, {}).get("excluded", False)
             self.raw_video_data_backup.append(data)
 
         self.log("\n===== 统计完成 =====")
