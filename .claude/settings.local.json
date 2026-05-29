@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"from bili_stat.config import *; print\\('config OK'\\)\")",
+      "Bash(python -c \"from bili_stat.storage import *; print\\('storage OK'\\)\")",
+      "Bash(python -c \"from bili_stat.api import StatThread; print\\('api OK'\\)\")",
+      "Bash(python -c \"from bili_stat.excel_export import export_excel; print\\('excel_export OK'\\)\")",
+      "Bash(python -c \"from bili_stat.ui.styles import MAIN_STYLE; print\\('styles OK'\\)\")",
+      "Bash(python -c \"from bili_stat.ui.dialogs import CookieSettingsDialog, VideoSelectionDialog; print\\('dialogs OK'\\)\")",
+      "Bash(python -c \"from bili_stat.ui.main_window import main; print\\('main_window OK'\\)\")",
+      "Bash(python -c \"import bilibili_api; print\\(bilibili_api.__file__\\)\")",
+      "Bash(python -m PyInstaller \"B站UP主播放量统计.spec\" --noconfirm)",
+      "Bash(gh auth *)",
+      "Bash(Test-Path .gitignore)",
+      "Bash(git init *)",
+      "Bash(git branch *)",
+      "Bash(gh repo *)",
+      "Bash(git add *)"
+    ]
+  }
+}
