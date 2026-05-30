@@ -20,7 +20,7 @@ def load_cookie_config():
         try:
             with open(cookie_file, "r", encoding="utf-8") as f:
                 return json.load(f)
-        except:
+        except Exception:
             pass
     return {
         "SESSDATA": "",
@@ -74,7 +74,7 @@ def load_role_filter_settings():
             with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
                 s = json.load(f)
                 return s.get("role_filter_enabled", False), s.get("excluded_roles", [])
-        except:
+        except Exception:
             pass
     return False, []
 
@@ -86,7 +86,7 @@ def save_role_filter_settings(enabled, roles):
         try:
             with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
                 settings = json.load(f)
-        except:
+        except Exception:
             pass
     settings["role_filter_enabled"] = enabled
     settings["excluded_roles"] = roles

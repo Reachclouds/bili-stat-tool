@@ -2,6 +2,7 @@ import os
 import json
 import shutil
 import time
+import warnings
 from datetime import datetime
 
 from .config import get_app_data_dir
@@ -40,21 +41,18 @@ def save_daily_video_data(data):
     try:
         with open(temp_path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
-        if os.path.exists(data_path):
-            os.replace(temp_path, data_path)
-        else:
-            os.rename(temp_path, data_path)
-    except Exception as e:
+        os.replace(temp_path, data_path)
+    except Exception:
         if os.path.exists(temp_path):
             os.remove(temp_path)
-        raise e
+        raise
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     backup_path = os.path.join(backup_dir, f"video_7day_backup_{timestamp}.json")
     try:
         shutil.copy2(data_path, backup_path)
-    except:
-        pass
+    except Exception as e:
+        warnings.warn(f"备份失败: {e}", stacklevel=2)
 
     clean_old_backups(30)
 
@@ -72,7 +70,9 @@ def load_daily_video_data():
                         v["is_collaborative"] = False
                     if "collab_role" not in v:
                         v["collab_role"] = ""
+                    if v.get("stat_days", 0) >= 7 and v.get("status") != "已结算":
+                        v["status"] = "已结算"
                 return data
-        except:
+        except Exception:
             return {}
     return {}

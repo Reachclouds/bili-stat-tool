@@ -2,7 +2,6 @@ import sys
 import os
 import re
 import json
-import shutil
 import traceback
 from datetime import datetime
 
@@ -14,9 +13,9 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QH
 from PyQt5.QtCore import QDate, Qt
 from PyQt5.QtGui import QFont
 
-from ..config import (get_app_data_dir, SESSDATA, BILI_JCT, BUVID3, DEDEUSERID,
-                      AC_TIME_VALUE, MAX_UP_COUNT, CONFIG_FILE, TIMEZONE_CN)
-from ..storage import save_daily_video_data, load_daily_video_data, get_daily_data_path
+from .. import config
+from ..config import get_app_data_dir, MAX_UP_COUNT, CONFIG_FILE, TIMEZONE_CN
+from ..storage import save_daily_video_data
 from ..api import StatThread
 from ..excel_export import export_excel
 from .styles import MAIN_STYLE
@@ -181,6 +180,7 @@ class BiliStatTool(QMainWindow):
 
     def closeEvent(self, e):
         if self.stat_thread and self.stat_thread.isRunning():
+            save_daily_video_data(self.stat_thread.daily_data)
             self.stat_thread.requestInterruption()
             self.stat_thread.wait(3000)
         e.accept()
@@ -195,7 +195,7 @@ class BiliStatTool(QMainWindow):
                     if "enabled" not in u:
                         u["enabled"] = True
                 self.refresh_up_list_text()
-            except:
+            except Exception:
                 self.up_list = []
 
     def save_up_list(self):
@@ -332,8 +332,21 @@ class BiliStatTool(QMainWindow):
         self.stb.setEnabled(False)
         self.spb.setEnabled(True)
 
-        self.stat_thread = StatThread(enabled_up_list, sdt_full, edt_full, SESSDATA, BILI_JCT, BUVID3, DEDEUSERID,
-                                      AC_TIME_VALUE)
+        if self.stat_thread:
+            if self.stat_thread.isRunning():
+                self.stat_thread.requestInterruption()
+                self.stat_thread.wait(3000)
+            try:
+                self.stat_thread.log_signal.disconnect()
+                self.stat_thread.table_signal.disconnect()
+                self.stat_thread.finish_signal.disconnect()
+                self.stat_thread.error_signal.disconnect()
+            except:
+                pass
+
+        self.stat_thread = StatThread(enabled_up_list, sdt_full, edt_full,
+                                      config.SESSDATA, config.BILI_JCT, config.BUVID3,
+                                      config.DEDEUSERID, config.AC_TIME_VALUE)
         self.stat_thread.log_signal.connect(self.log)
         self.stat_thread.table_signal.connect(self.refresh_table)
         self.stat_thread.finish_signal.connect(self.stat_finish)
@@ -347,6 +360,9 @@ class BiliStatTool(QMainWindow):
             self.log("已停止")
         self.stb.setEnabled(True)
         self.spb.setEnabled(False)
+        if self.raw_video_data_backup:
+            self.exb.setEnabled(True)
+            self.fib.setEnabled(True)
 
     def refresh_table(self, data):
         self.vt.setRowCount(len(data))
@@ -360,34 +376,9 @@ class BiliStatTool(QMainWindow):
                     table_item.setTextAlignment(Qt.AlignCenter)
         self.vt.scrollToBottom()
 
-    def stat_finish(self, rank_data):
+    def stat_finish(self, rank_data, result_data):
         self.final_rank_data = rank_data
-        self.raw_video_data_backup = []
-        daily = load_daily_video_data()
-        for row in range(self.vt.rowCount()):
-            data = {}
-            keys = ["nickname", "title", "bvid", "pub_time", "current_play", "stat_days", "play_tag", "collab_role"]
-            for col, key in enumerate(keys):
-                item = self.vt.item(row, col)
-                data[key] = item.text() if item else ""
-            try:
-                for up in self.up_list:
-                    if up["nickname"] == data["nickname"]:
-                        data["uid"] = int(up["uid"])
-                        break
-                else:
-                    data["uid"] = 0
-            except:
-                data["uid"] = 0
-            try:
-                data["current_play"] = int(data["current_play"])
-                data["stat_days"] = int(data["stat_days"])
-            except:
-                data["current_play"] = 0
-                data["stat_days"] = 0
-            bvid = data.get("bvid", "")
-            data["excluded"] = daily.get(bvid, {}).get("excluded", False)
-            self.raw_video_data_backup.append(data)
+        self.raw_video_data_backup = result_data
 
         self.log("\n===== 统计完成 =====")
         self.log("✅ 已结算视频：数据永久锁定")
@@ -399,14 +390,6 @@ class BiliStatTool(QMainWindow):
         self.exb.setEnabled(True)
         self.fib.setEnabled(True)
         QMessageBox.information(self, "完成", "统计完成！\n已结算视频锁定，统计中视频次日更新")
-        backup_dir = os.path.join(get_app_data_dir(), "backups")
-        os.makedirs(backup_dir, exist_ok=True)
-        backup_file = os.path.join(backup_dir, f"video_7day_data_{datetime.now().strftime('%Y%m%d')}.json")
-        try:
-            shutil.copy(get_daily_data_path(), backup_file)
-            self.log(f"✅ 数据已备份至：{backup_file}")
-        except Exception as e:
-            self.log(f"⚠️ 备份失败：{str(e)}")
 
     def export_excel(self):
         fp = export_excel(self, self.raw_video_data_backup, self.final_rank_data)
@@ -419,10 +402,7 @@ class BiliStatTool(QMainWindow):
             return
         dialog = VideoSelectionDialog(self.raw_video_data_backup, self)
         if dialog.exec_() == QDialog.Accepted:
-            if hasattr(dialog, 'result_data'):
-                filtered = dialog.result_data
-            else:
-                filtered = [it["data"] for it in dialog.data_list if it["selected"]]
+            filtered = dialog.result_data
 
             if not filtered:
                 QMessageBox.warning(self, "提示", "筛选结果为空，无法更新")
@@ -437,7 +417,7 @@ class BiliStatTool(QMainWindow):
                 nick = video.get("nickname", "")
                 try:
                     play = int(video.get("current_play", 0))
-                except:
+                except (ValueError, TypeError):
                     play = 0
                 if uid not in total_map:
                     total_map[uid] = {"uid": uid, "nickname": nick, "total_play": 0}
@@ -463,15 +443,18 @@ def except_hook(t, v, tb):
     if issubclass(t, KeyboardInterrupt):
         sys.__excepthook__(t, v, tb)
         return
-    log_dir = os.path.join(get_app_data_dir(), "logs")
-    os.makedirs(log_dir, exist_ok=True)
-    log_file = os.path.join(log_dir, f"crash_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt")
-    with open(log_file, 'w', encoding='utf-8') as f:
-        f.write("".join(traceback.format_exception(t, v, tb)))
     try:
-        QMessageBox.critical(None, "程序异常", f"错误已保存至：\n{log_file}")
-    except:
-        pass
+        log_dir = os.path.join(get_app_data_dir(), "logs")
+        os.makedirs(log_dir, exist_ok=True)
+        log_file = os.path.join(log_dir, f"crash_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt")
+        with open(log_file, 'w', encoding='utf-8') as f:
+            f.write("".join(traceback.format_exception(t, v, tb)))
+        try:
+            QMessageBox.critical(None, "程序异常", f"错误已保存至：\n{log_file}")
+        except Exception:
+            pass
+    except Exception:
+        sys.__excepthook__(t, v, tb)
 
 
 def main():

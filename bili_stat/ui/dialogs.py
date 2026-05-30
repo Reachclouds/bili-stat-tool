@@ -1,3 +1,5 @@
+import warnings
+
 from PyQt5.QtWidgets import (QDialog, QFormLayout, QLineEdit, QPushButton,
                              QHBoxLayout, QMessageBox, QVBoxLayout, QLabel,
                              QTableWidget, QTableWidgetItem, QHeaderView,
@@ -24,12 +26,18 @@ class CookieSettingsDialog(QDialog):
         self.buvid = QLineEdit(cc.get("BUVID3", ""))
         self.dede = QLineEdit(cc.get("DEDEUSERID", ""))
         self.ac_time = QLineEdit(cc.get("AC_TIME_VALUE", "1000"))
+        for field in (self.sess, self.bili, self.buvid):
+            field.setEchoMode(QLineEdit.Password)
         layout.addRow("DedeUserID:", self.dede)
         layout.addRow("ac_time_value:", self.ac_time)
         layout.addRow("SESSDATA:", self.sess)
         layout.addRow("bili_jct:", self.bili)
         layout.addRow("buvid3:", self.buvid)
+        self._toggle_btn = QPushButton("显示")
+        self._toggle_btn.setFixedWidth(60)
+        self._toggle_btn.clicked.connect(self._toggle_echo_mode)
         bl = QHBoxLayout()
+        bl.addWidget(self._toggle_btn)
         sav = QPushButton("保存")
         sav.clicked.connect(self.save_and_close)
         can = QPushButton("取消")
@@ -38,6 +46,17 @@ class CookieSettingsDialog(QDialog):
         bl.addWidget(sav)
         bl.addWidget(can)
         layout.addRow(bl)
+
+    def _toggle_echo_mode(self):
+        fields = (self.sess, self.bili, self.buvid)
+        if fields[0].echoMode() == QLineEdit.Password:
+            for f in fields:
+                f.setEchoMode(QLineEdit.Normal)
+            self._toggle_btn.setText("隐藏")
+        else:
+            for f in fields:
+                f.setEchoMode(QLineEdit.Password)
+            self._toggle_btn.setText("显示")
 
     def save_and_close(self):
         update_cookie(
@@ -60,6 +79,7 @@ class VideoSelectionDialog(QDialog):
         self.resize(1200, 750)
         self.current_data = current_data
         self.data_list = []
+        self._cached_daily_data = load_daily_video_data()
         self.role_filter_enabled, self.excluded_roles = load_role_filter_settings()
 
         self.init_ui()
@@ -139,7 +159,7 @@ class VideoSelectionDialog(QDialog):
         header.setSectionResizeMode(3, QHeaderView.Fixed)
         header.resizeSection(3, 105)
         header.setSectionResizeMode(4, QHeaderView.Fixed)
-        header.resizeSection(4, 90)
+        header.resizeSection(4, 130)
         header.setSectionResizeMode(5, QHeaderView.Fixed)
         header.resizeSection(5, 80)
         header.setSectionResizeMode(6, QHeaderView.Fixed)
@@ -236,7 +256,7 @@ class VideoSelectionDialog(QDialog):
                 })
             return result
 
-        daily = load_daily_video_data()
+        daily = self._cached_daily_data
         full = []
         seen_bvids = set()
         show_excluded = self.show_excluded_check.isChecked()
@@ -343,7 +363,7 @@ class VideoSelectionDialog(QDialog):
             if original_idx is not None and 0 <= original_idx < len(self.data_list):
                 self.data_list[original_idx]["selected"] = (item.checkState() == Qt.Checked)
         except Exception as e:
-            pass
+            warnings.warn(f"on_item_check_changed 异常: {e}", stacklevel=2)
 
     def on_row_double_clicked(self, row, col):
         if col == 0:
@@ -383,6 +403,12 @@ class VideoSelectionDialog(QDialog):
         self.refresh_table_view()
 
     def confirm_selection(self):
+        self.result_data = [it["data"] for it in self.data_list if it.get("selected", True)]
+
+        if not self.result_data:
+            QMessageBox.warning(self, "提示", "至少保留一个视频！")
+            return
+
         save_role_filter_settings(self.role_filter_enabled, self.excluded_roles)
         daily = load_daily_video_data()
         for item in self.data_list:
@@ -390,11 +416,5 @@ class VideoSelectionDialog(QDialog):
             if bvid and bvid in daily:
                 daily[bvid]["excluded"] = not item.get("selected", True)
         save_daily_video_data(daily)
-
-        self.result_data = [it["data"] for it in self.data_list if it.get("selected", True)]
-
-        if not self.result_data:
-            QMessageBox.warning(self, "提示", "至少保留一个视频！")
-            return
 
         self.accept()

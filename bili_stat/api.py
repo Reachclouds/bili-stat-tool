@@ -13,7 +13,7 @@ from .storage import save_daily_video_data, load_daily_video_data
 class StatThread(QThread):
     log_signal = pyqtSignal(str)
     table_signal = pyqtSignal(list)
-    finish_signal = pyqtSignal(list)
+    finish_signal = pyqtSignal(list, list)
     error_signal = pyqtSignal(str)
 
     def __init__(self, up_list, start_date, end_date,
@@ -32,16 +32,40 @@ class StatThread(QThread):
         self.current_page = 0
         self.daily_data = load_daily_video_data()
 
+    # def _human_like_delay(self, delay_type="page"):
+    #     if delay_type == "up":
+    #         if random.random() < 0.3:
+    #             delay = random.uniform(120, 300)
+    #             self.log_signal.emit(f"  ☕ 模拟真人休息 {delay:.1f} 秒...")
+    #         else:
+    #             delay = random.uniform(30, 60)
+    #             self.log_signal.emit(f"  ↳ 切换UP主，等待 {delay:.1f} 秒...")
+    #     elif delay_type == "page":
+    #         delay = random.uniform(120, 300)
+    #         self.log_signal.emit(f"  ↳ 第 {self.current_page} 页完成，等待 {delay:.1f} 秒...")
+    #     elif delay_type == "retry":
+    #         delay = random.uniform(300, 600)
+    #         self.log_signal.emit(f"  🚨 触发风控，强制冷却 {delay:.1f} 秒后重试...")
+    #     elif delay_type == "video_info":
+    #         delay = random.uniform(5, 15)
+    #         self.log_signal.emit(f"  ↳ 获取共创信息，等待 {delay:.1f} 秒...")
+    #     elapsed = 0
+    #     while elapsed < delay:
+    #         if self.isInterruptionRequested():
+    #             return
+    #         time.sleep(min(1, delay - elapsed))
+    #         elapsed += 1
+
     def _human_like_delay(self, delay_type="page"):
         if delay_type == "up":
             if random.random() < 0.3:
-                delay = random.uniform(120, 300)
+                delay = random.uniform(5, 30)
                 self.log_signal.emit(f"  ☕ 模拟真人休息 {delay:.1f} 秒...")
             else:
-                delay = random.uniform(30, 60)
+                delay = random.uniform(3, 20)
                 self.log_signal.emit(f"  ↳ 切换UP主，等待 {delay:.1f} 秒...")
         elif delay_type == "page":
-            delay = random.uniform(120, 300)
+            delay = random.uniform(10, 30)
             self.log_signal.emit(f"  ↳ 第 {self.current_page} 页完成，等待 {delay:.1f} 秒...")
         elif delay_type == "retry":
             delay = random.uniform(300, 600)
@@ -50,24 +74,14 @@ class StatThread(QThread):
             delay = random.uniform(5, 15)
             self.log_signal.emit(f"  ↳ 获取共创信息，等待 {delay:.1f} 秒...")
         time.sleep(delay)
-    # def _human_like_delay(self, delay_type="page"):
-    #     if delay_type == "up":
-    #         if random.random() < 0.3:
-    #             delay = random.uniform(5, 30)
-    #             self.log_signal.emit(f"  ☕ 模拟真人休息 {delay:.1f} 秒...")
-    #         else:
-    #             delay = random.uniform(3, 20)
-    #             self.log_signal.emit(f"  ↳ 切换UP主，等待 {delay:.1f} 秒...")
-    #     elif delay_type == "page":
-    #         delay = random.uniform(10, 30)
-    #         self.log_signal.emit(f"  ↳ 第 {self.current_page} 页完成，等待 {delay:.1f} 秒...")
-    #     elif delay_type == "retry":
-    #         delay = random.uniform(300, 600)
-    #         self.log_signal.emit(f"  🚨 触发风控，强制冷却 {delay:.1f} 秒后重试...")
-    #     elif delay_type == "video_info":
-    #         delay = random.uniform(5, 15)
-    #         self.log_signal.emit(f"  ↳ 获取共创信息，等待 {delay:.1f} 秒...")
-    #     time.sleep(delay)
+
+    @staticmethod
+    def _is_412_error(e):
+        """检测是否为412风控错误，先检查异常属性，回退到字符串匹配"""
+        status = getattr(e, "status", None) or getattr(e, "code", None)
+        if status == 412:
+            return True
+        return "412" in str(e) or "Precondition Failed" in str(e)
 
     def _process_video(self, video, uid, nickname, now):
         pub_time = datetime.fromtimestamp(video["created"], tz=TIMEZONE_CN)
@@ -81,7 +95,7 @@ class StatThread(QThread):
         excluded = self.daily_data.get(bvid, {}).get("excluded", False)
 
         attr = video.get("attribute", 0)
-        is_collaborative = (attr >> 24) & 1 == 1
+        is_collaborative = ((attr >> 24) & 1) == 1
         collab_role = ""
         if is_collaborative:
             staff_list = video.get("staff", [])
@@ -94,7 +108,8 @@ class StatThread(QThread):
                     staff_list = []
             for s in staff_list:
                 if s.get("mid") == uid:
-                    collab_role = s.get("title", "")
+                    role = s.get("title", "")
+                    collab_role = "" if role == "UP主" else role
                     break
 
         if days_diff >= 7:
@@ -102,6 +117,8 @@ class StatThread(QThread):
                 current_play = self.daily_data[bvid]["final_play"]
                 play_tag = "已结算"
                 stat_days = 7
+                self.daily_data[bvid]["status"] = "已结算"
+                self.daily_data[bvid]["stat_days"] = 7
             else:
                 play_raw = video.get("play", 0)
                 current_play = int(play_raw) if str(play_raw).isdigit() else 0
@@ -135,7 +152,7 @@ class StatThread(QThread):
             "uid": uid, "nickname": nickname, "title": title, "bvid": bvid,
             "pub_time": pub_time.strftime("%Y-%m-%d %H:%M"),
             "current_play": current_play, "stat_days": stat_days,
-            "play_tag": play_tag,
+            "play_tag": play_tag, "excluded": excluded,
             "is_collaborative": is_collaborative,
             "collab_role": collab_role,
         }
@@ -240,17 +257,24 @@ class StatThread(QThread):
                     self._human_like_delay(delay_type="page")
 
             except Exception as e:
-                err_str = str(e)
-                if "412" in err_str or "Precondition Failed" in err_str:
+                if self._is_412_error(e):
                     self.log_signal.emit(f"❌ {nickname} 触发风控（412），先强制冷却...")
                     self._human_like_delay(delay_type="retry")
                     self.log_signal.emit(f"🔄 尝试游客模式获取 {nickname} 的投稿...")
                 else:
-                    self.error_signal.emit(f"获取 {nickname} 投稿失败：{err_str}")
+                    self.error_signal.emit(f"获取 {nickname} 投稿失败：{str(e)}")
                     continue
 
                 try:
                     u = user.User(uid)
+                    request_settings.set("headers", {
+                        "Referer": f"https://space.bilibili.com/{uid}/video",
+                        "Origin": "https://space.bilibili.com",
+                        "Accept": "application/json, text/plain, */*",
+                        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+                        "Cache-Control": "no-cache",
+                        "Pragma": "no-cache"
+                    })
                     page = 1
                     has_more = True
                     temp_videos = []
@@ -296,10 +320,11 @@ class StatThread(QThread):
             up_total_list.append({
                 "nickname": nickname, "uid": uid, "total_play": up_total_play
             })
+            save_daily_video_data(self.daily_data)
             self.table_signal.emit(result_data)
 
         save_daily_video_data(self.daily_data)
         up_total_list_sorted = sorted(up_total_list, key=lambda x: (-x["total_play"], x["nickname"]))
         for idx, item in enumerate(up_total_list_sorted, 1):
             item["rank"] = idx
-        self.finish_signal.emit(up_total_list_sorted)
+        self.finish_signal.emit(up_total_list_sorted, result_data)

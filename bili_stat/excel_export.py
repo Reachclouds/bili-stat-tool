@@ -1,4 +1,3 @@
-import os
 from datetime import datetime
 from PyQt5.QtWidgets import QFileDialog, QMessageBox
 import openpyxl
@@ -10,6 +9,19 @@ from .config import (
     header_font, content_font, header_fill
 )
 from .storage import load_daily_video_data
+
+
+def _sanitize_excel_value(val):
+    """防止 Excel 公式注入：对以 = + - @ 开头的字符串添加 ' 前缀"""
+    if isinstance(val, str) and val and val[0] in ('=', '+', '-', '@'):
+        return "'" + val
+    return val
+
+
+def _cjk_len(s):
+    """估算字符串显示宽度，CJK 字符按2倍计算"""
+    s = str(s or "")
+    return sum(2 if '一' <= c <= '鿿' or '　' <= c <= '〿' else 1 for c in s)
 
 
 def export_excel(parent, raw_video_data_backup, final_rank_data):
@@ -25,6 +37,7 @@ def export_excel(parent, raw_video_data_backup, final_rank_data):
     if not fp:
         return
 
+    wb = None
     try:
         wb = openpyxl.Workbook()
 
@@ -101,24 +114,25 @@ def export_excel(parent, raw_video_data_backup, final_rank_data):
 
             values = [
                 video["nickname"], video["title"], video["bvid"],
-                video["pub_time"], str(video["current_play"]),
-                str(video["stat_days"]), video["play_tag"],
+                video["pub_time"], video["current_play"],
+                video["stat_days"], video["play_tag"],
                 video.get("collab_role", ""),
             ]
 
             for col, val in enumerate(values, 1):
-                cell = ws_detail.cell(row_idx, col, val)
+                cell_val = val if isinstance(val, (int, float)) else _sanitize_excel_value(val)
+                cell = ws_detail.cell(row_idx, col, cell_val)
                 cell.font = content_font
                 cell.border = thin_border
                 cell.alignment = left_align if col == 2 else center_align
-                if col == 5 and str(val).isdigit():
+                if col == 5:
                     cell.number_format = "#,##0"
                 cell.fill = fill
 
         for col in range(1, 9):
             letter = get_column_letter(col)
-            max_len = max((len(str(cell.value or "")) for cell in ws_detail[letter]), default=0)
-            width = min(max_len + 8, 60) if col != 2 else min(max_len * 1.2 + 5, 80)
+            max_len = max((_cjk_len(cell.value) for cell in ws_detail[letter]), default=0)
+            width = min(max_len + 8, 60) if col != 2 else min(max_len + 10, 80)
             ws_detail.column_dimensions[letter].width = width
         ws_detail.freeze_panes = "A2"
 
@@ -238,7 +252,7 @@ def export_excel(parent, raw_video_data_backup, final_rank_data):
 
         for col in range(1, 7):
             letter = get_column_letter(col)
-            max_len = max((len(str(cell.value or "")) for cell in ws_rank[letter]), default=0)
+            max_len = max((_cjk_len(cell.value) for cell in ws_rank[letter]), default=0)
             ws_rank.column_dimensions[letter].width = max_len + 8
         ws_rank.freeze_panes = "A2"
 
@@ -256,3 +270,9 @@ def export_excel(parent, raw_video_data_backup, final_rank_data):
     except Exception as e:
         QMessageBox.warning(parent, "失败", f"导出失败：{str(e)}")
         return None
+    finally:
+        if wb is not None:
+            try:
+                wb.close()
+            except:
+                pass
