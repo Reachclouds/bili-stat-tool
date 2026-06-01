@@ -224,11 +224,8 @@ class VideoSelectionDialog(QDialog):
     def _get_full_data_internal(self):
         if not self.history_check.isChecked():
             result = []
-            show_excluded = self.show_excluded_check.isChecked()
             for item in self.current_data:
                 is_excluded = item.get("excluded", False)
-                if not show_excluded and is_excluded:
-                    continue
                 result.append({
                     "data": item,
                     "selected": not is_excluded,

@@ -12,7 +12,20 @@ from .config import (
 from .storage import load_daily_video_data
 
 
-def export_excel(parent, raw_video_data_backup, final_rank_data):
+def _sanitize_excel_value(val):
+    """防止 Excel 公式注入：对以 = + - @ 开头的字符串添加 ' 前缀"""
+    if isinstance(val, str) and val and val[0] in ('=', '+', '-', '@'):
+        return "'" + val
+    return val
+
+
+def _cjk_len(s):
+    """估算字符串显示宽度，CJK 字符按2倍计算"""
+    s = str(s or "")
+    return sum(2 if '一' <= c <= '鿿' or '　' <= c <= '〿' else 1 for c in s)
+
+
+def export_excel(parent, raw_video_data_backup, final_rank_data, enabled_uids=None):
     if not raw_video_data_backup or not final_rank_data:
         QMessageBox.warning(parent, "提示", "无数据")
         return
@@ -46,6 +59,8 @@ def export_excel(parent, raw_video_data_backup, final_rank_data):
 
         for v in daily_data.values():
             if v.get("excluded", False):
+                continue
+            if enabled_uids is not None and v.get("uid", 0) not in enabled_uids:
                 continue
             if v.get("status") == "已结算" and "final_play" in v:
                 bvid = v.get("bvid")
@@ -136,6 +151,8 @@ def export_excel(parent, raw_video_data_backup, final_rank_data):
         settled_map = {}
         for v in daily_data.values():
             if v.get("excluded", False):
+                continue
+            if enabled_uids is not None and v.get("uid", 0) not in enabled_uids:
                 continue
             if v.get("status") == "已结算" and "final_play" in v:
                 uid = v.get("uid")

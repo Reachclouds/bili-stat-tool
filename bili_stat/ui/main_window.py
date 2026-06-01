@@ -204,7 +204,7 @@ class BiliStatTool(QMainWindow):
 
     def on_up_item_changed(self, item):
         idx = item.data(Qt.UserRole)
-        if idx is None or idx >= len(self.up_list):
+        if idx is None or idx < 0 or idx >= len(self.up_list):
             return
         self.up_list[idx]["enabled"] = (item.checkState() == Qt.Checked)
         self.save_up_list()
@@ -409,7 +409,8 @@ class BiliStatTool(QMainWindow):
             self.log(f"⚠️ 备份失败：{str(e)}")
 
     def export_excel(self):
-        fp = export_excel(self, self.raw_video_data_backup, self.final_rank_data)
+        enabled_uids = {int(u["uid"]) for u in self.up_list if u.get("enabled", True)}
+        fp = export_excel(self, self.raw_video_data_backup, self.final_rank_data, enabled_uids=enabled_uids)
         if fp:
             self.log(f"✅ 导出完整历史数据成功：{fp}")
 
