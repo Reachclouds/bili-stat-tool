@@ -25,7 +25,7 @@ def _cjk_len(s):
     return sum(2 if '一' <= c <= '鿿' or '　' <= c <= '〿' else 1 for c in s)
 
 
-def export_excel(parent, raw_video_data_backup, final_rank_data, enabled_uids=None):
+def export_excel(parent, raw_video_data_backup, final_rank_data, enabled_uids=None, settlement_data=None):
     if not raw_video_data_backup or not final_rank_data:
         QMessageBox.warning(parent, "提示", "无数据")
         return
@@ -259,13 +259,101 @@ def export_excel(parent, raw_video_data_backup, final_rank_data, enabled_uids=No
             ws_rank.column_dimensions[letter].width = max_len + 8
         ws_rank.freeze_panes = "A2"
 
+        # ====================== 【3】奖池结算 ======================
+        if settlement_data:
+            ws_st = wb.create_sheet("奖池结算")
+
+            BASE_COL = 7  # 从 G 列开始居中
+
+            tier_colors = [color for _, _, _, color in RANK_LEVEL_CONFIG]
+            tier_name_font = Font(name='微软雅黑', size=12, bold=True)
+            sub_header_font = Font(name='微软雅黑', size=10, bold=True, color='333333')
+            row = 1
+            tier_results = settlement_data.get("tier_results", [])
+
+            for idx, tr in enumerate(tier_results):
+                color = tier_colors[idx % len(tier_colors)]
+                fill = PatternFill('solid', fgColor=color)
+
+                # ── 档位名称行 ──
+                ws_st.merge_cells(start_row=row, start_column=BASE_COL, end_row=row, end_column=BASE_COL + 2)
+                tier_cell = ws_st.cell(row, BASE_COL, f"[{tr['tier_name']}]")
+                tier_cell.font = tier_name_font
+                tier_cell.fill = fill
+                tier_cell.alignment = center_align
+                tier_cell.border = thin_border
+                for c in (BASE_COL + 1, BASE_COL + 2):
+                    cell = ws_st.cell(row, c)
+                    cell.fill = fill
+                    cell.border = thin_border
+                row += 1
+
+                # ── 子表头行1：累计播放量 | 瓜分奖池 | 单人最高瓜分 ──
+                sub_headers_1 = ["累计播放量", "瓜分奖池", "单人最高瓜分"]
+                for i, h in enumerate(sub_headers_1):
+                    cell = ws_st.cell(row, BASE_COL + i, h)
+                    cell.font = sub_header_font
+                    cell.fill = fill
+                    cell.alignment = center_align
+                    cell.border = thin_border
+                row += 1
+
+                # ── 数值行 ──
+                vals_1 = [tr["threshold"], tr["pool"], tr["max_per_person"]]
+                for i, val in enumerate(vals_1):
+                    cell = ws_st.cell(row, BASE_COL + i, val)
+                    cell.font = content_font
+                    cell.fill = fill
+                    cell.alignment = center_align
+                    cell.border = thin_border
+                    if i == 0:
+                        cell.number_format = "#,##0"
+                    else:
+                        cell.number_format = "#,##0.00"
+                row += 1
+
+                # ── 子表头行2：已达到的作者 | 每位作者的播放量 | 作者瓜分金额 ──
+                sub_headers_2 = ["已达到的作者", "每位作者的播放量", "作者瓜分金额"]
+                for i, h in enumerate(sub_headers_2):
+                    cell = ws_st.cell(row, BASE_COL + i, h)
+                    cell.font = sub_header_font
+                    cell.fill = fill
+                    cell.alignment = center_align
+                    cell.border = thin_border
+                row += 1
+
+                # ── 作者明细行 ──
+                for m in tr.get("members", []):
+                    detail_vals = [m["nickname"], m["individual_views"], m["actual"]]
+                    for i, val in enumerate(detail_vals):
+                        cell = ws_st.cell(row, BASE_COL + i, val)
+                        cell.font = content_font
+                        cell.fill = fill
+                        cell.alignment = center_align
+                        cell.border = thin_border
+                        if i == 1:
+                            cell.number_format = "#,##0"
+                        elif i == 2:
+                            cell.number_format = "#,##0.00"
+                    row += 1
+
+                # ── 档位间空行 ──
+                row += 1
+
+            col_widths = {BASE_COL: 22, BASE_COL + 1: 22, BASE_COL + 2: 20}
+            for col, w in col_widths.items():
+                ws_st.column_dimensions[get_column_letter(col)].width = w
+            ws_st.freeze_panes = "A2"
+
         # ====================== 保存 ======================
         wb.save(fp)
+        sheet_names = "· 视频明细（全部历史）\n· UP主整体排名（全部历史）"
+        if settlement_data:
+            sheet_names += "\n· 奖池结算"
         QMessageBox.information(
             parent, "导出成功",
             f"✅ 已导出完整历史统计数据！\n\n"
-            f"· 视频明细（全部历史）\n"
-            f"· UP主整体排名（全部历史）\n\n"
+            f"{sheet_names}\n\n"
             f"文件已保存至：\n{fp}"
         )
         return fp

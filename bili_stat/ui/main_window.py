@@ -30,6 +30,7 @@ class BiliStatTool(QMainWindow):
         self.stat_thread = None
         self.final_rank_data = []
         self.raw_video_data_backup = []
+        self.settlement_result = None
         self.init_ui()
         self.load_up_list()
 
@@ -140,13 +141,18 @@ class BiliStatTool(QMainWindow):
         self.fib.clicked.connect(self.open_filter_dialog)
         self.fib.setEnabled(False)
         ttl.addWidget(self.fib)
+        self.stb2 = QPushButton("奖池结算")
+        self.stb2.setFixedSize(120, 34)
+        self.stb2.clicked.connect(self.open_settlement_dialog)
+        self.stb2.setEnabled(False)
+        ttl.addWidget(self.stb2)
         dal.addLayout(ttl)
 
         self.vt = QTableWidget()
         self.vt.setColumnCount(8)
         self.vt.setHorizontalHeaderLabels(["UP主昵称", "视频标题", "BV号", "发布时间", "7天播放量", "统计天数", "状态", "共创角色"])
         self.vt.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.vt.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        self.vt.horizontalHeader().setMinimumSectionSize(60)
         self.vt.setEditTriggers(QTableWidget.NoEditTriggers)
         self.vt.setAlternatingRowColors(True)
         dal.addWidget(self.vt)
@@ -327,8 +333,10 @@ class BiliStatTool(QMainWindow):
             edt_full = now
         self.vt.setRowCount(0)
         self.logt.clear()
+        self.settlement_result = None
         self.exb.setEnabled(False)
         self.fib.setEnabled(False)
+        self.stb2.setEnabled(False)
         self.stb.setEnabled(False)
         self.spb.setEnabled(True)
 
@@ -398,6 +406,7 @@ class BiliStatTool(QMainWindow):
         self.spb.setEnabled(False)
         self.exb.setEnabled(True)
         self.fib.setEnabled(True)
+        self.stb2.setEnabled(True)
         QMessageBox.information(self, "完成", "统计完成！\n已结算视频锁定，统计中视频次日更新")
         backup_dir = os.path.join(get_app_data_dir(), "backups")
         os.makedirs(backup_dir, exist_ok=True)
@@ -410,7 +419,8 @@ class BiliStatTool(QMainWindow):
 
     def export_excel(self):
         enabled_uids = {int(u["uid"]) for u in self.up_list if u.get("enabled", True)}
-        fp = export_excel(self, self.raw_video_data_backup, self.final_rank_data, enabled_uids=enabled_uids)
+        fp = export_excel(self, self.raw_video_data_backup, self.final_rank_data,
+                          enabled_uids=enabled_uids, settlement_data=self.settlement_result)
         if fp:
             self.log(f"✅ 导出完整历史数据成功：{fp}")
 
@@ -454,6 +464,24 @@ class BiliStatTool(QMainWindow):
             for item in ranked[:10]:
                 self.log(f"{item['rank']}. {item['nickname']}：{item['total_play']}")
             QMessageBox.information(self, "完成", f"筛选完成！\n当前显示 {len(filtered)} 个视频")
+
+    def open_settlement_dialog(self):
+        if not self.raw_video_data_backup:
+            QMessageBox.warning(self, "提示", "暂无统计数据，请先运行统计")
+            return
+        from .settlement_dialog import SettlementDialog
+        sdt = self.sd.date().toPyDate()
+        edt = self.ed.date().toPyDate()
+        dialog = SettlementDialog(
+            self.raw_video_data_backup,
+            datetime.combine(sdt, datetime.min.time(), tzinfo=TIMEZONE_CN),
+            datetime.combine(edt, datetime.max.time(), tzinfo=TIMEZONE_CN),
+            self
+        )
+        if dialog.exec_() == QDialog.Accepted:
+            if dialog.settlement_result:
+                self.settlement_result = dialog.settlement_result
+                self.log("✅ 奖池结算结果已保存")
 
     def log(self, text):
         self.logt.append(f"[{datetime.now().strftime('%H:%M:%S')}] {text}")

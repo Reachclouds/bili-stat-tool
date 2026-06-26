@@ -32,34 +32,16 @@ class StatThread(QThread):
         self.current_page = 0
         self.daily_data = load_daily_video_data()
 
-    def _human_like_delay(self, delay_type="page"):
-        if delay_type == "up":
-            if random.random() < 0.3:
-                delay = random.uniform(120, 300)
-                self.log_signal.emit(f"  ☕ 模拟真人休息 {delay:.1f} 秒...")
-            else:
-                delay = random.uniform(30, 60)
-                self.log_signal.emit(f"  ↳ 切换UP主，等待 {delay:.1f} 秒...")
-        elif delay_type == "page":
-            delay = random.uniform(120, 300)
-            self.log_signal.emit(f"  ↳ 第 {self.current_page} 页完成，等待 {delay:.1f} 秒...")
-        elif delay_type == "retry":
-            delay = random.uniform(300, 600)
-            self.log_signal.emit(f"  🚨 触发风控，强制冷却 {delay:.1f} 秒后重试...")
-        elif delay_type == "video_info":
-            delay = random.uniform(5, 15)
-            self.log_signal.emit(f"  ↳ 获取共创信息，等待 {delay:.1f} 秒...")
-        time.sleep(delay)
     # def _human_like_delay(self, delay_type="page"):
     #     if delay_type == "up":
     #         if random.random() < 0.3:
-    #             delay = random.uniform(5, 30)
+    #             delay = random.uniform(120, 300)
     #             self.log_signal.emit(f"  ☕ 模拟真人休息 {delay:.1f} 秒...")
     #         else:
-    #             delay = random.uniform(3, 20)
+    #             delay = random.uniform(30, 60)
     #             self.log_signal.emit(f"  ↳ 切换UP主，等待 {delay:.1f} 秒...")
     #     elif delay_type == "page":
-    #         delay = random.uniform(10, 30)
+    #         delay = random.uniform(120, 300)
     #         self.log_signal.emit(f"  ↳ 第 {self.current_page} 页完成，等待 {delay:.1f} 秒...")
     #     elif delay_type == "retry":
     #         delay = random.uniform(300, 600)
@@ -68,6 +50,24 @@ class StatThread(QThread):
     #         delay = random.uniform(5, 15)
     #         self.log_signal.emit(f"  ↳ 获取共创信息，等待 {delay:.1f} 秒...")
     #     time.sleep(delay)
+    def _human_like_delay(self, delay_type="page"):
+        if delay_type == "up":
+            if random.random() < 0.3:
+                delay = random.uniform(5, 30)
+                self.log_signal.emit(f"  ☕ 模拟真人休息 {delay:.1f} 秒...")
+            else:
+                delay = random.uniform(3, 20)
+                self.log_signal.emit(f"  ↳ 切换UP主，等待 {delay:.1f} 秒...")
+        elif delay_type == "page":
+            delay = random.uniform(10, 30)
+            self.log_signal.emit(f"  ↳ 第 {self.current_page} 页完成，等待 {delay:.1f} 秒...")
+        elif delay_type == "retry":
+            delay = random.uniform(300, 600)
+            self.log_signal.emit(f"  🚨 触发风控，强制冷却 {delay:.1f} 秒后重试...")
+        elif delay_type == "video_info":
+            delay = random.uniform(5, 15)
+            self.log_signal.emit(f"  ↳ 获取共创信息，等待 {delay:.1f} 秒...")
+        time.sleep(delay)
 
     def _process_video(self, video, uid, nickname, now):
         pub_time = datetime.fromtimestamp(video["created"], tz=TIMEZONE_CN)
