@@ -1,8 +1,9 @@
 from PyQt5.QtWidgets import (QDialog, QFormLayout, QLineEdit, QPushButton,
                              QHBoxLayout, QMessageBox, QVBoxLayout, QLabel,
                              QTableWidget, QTableWidgetItem, QHeaderView,
-                             QCheckBox, QComboBox)
+                             QCheckBox, QComboBox, QStyledItemDelegate)
 from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QColor, QFontMetrics
 
 from ..config import load_cookie_config, update_cookie, load_role_filter_settings, save_role_filter_settings
 from ..storage import load_daily_video_data, save_daily_video_data
@@ -51,6 +52,19 @@ class CookieSettingsDialog(QDialog):
         self.accept()
 
 
+class ElidedTextDelegate(QStyledItemDelegate):
+    """文本省略号委托，过长文本显示...并支持tooltip"""
+
+    def initStyleOption(self, option, index):
+        super().initStyleOption(option, index)
+        text = option.text
+        if text:
+            fm = QFontMetrics(option.font)
+            available_width = option.rect.width() - 16
+            if available_width > 0:
+                option.text = fm.elidedText(text, Qt.ElideRight, available_width)
+
+
 class VideoSelectionDialog(QDialog):
     def __init__(self, current_data, parent=None):
         super().__init__(parent)
@@ -85,6 +99,11 @@ class VideoSelectionDialog(QDialog):
         self.show_excluded_check.setChecked(False)
         self.show_excluded_check.stateChanged.connect(self.load_and_refresh)
         ctrl_layout.addWidget(self.show_excluded_check)
+
+        self.show_deleted_check = QCheckBox("显示已删除的视频")
+        self.show_deleted_check.setChecked(True)
+        self.show_deleted_check.stateChanged.connect(self.load_and_refresh)
+        ctrl_layout.addWidget(self.show_deleted_check)
 
         ctrl_layout.addStretch()
         layout.addLayout(ctrl_layout)
@@ -134,12 +153,12 @@ class VideoSelectionDialog(QDialog):
         header.setSectionResizeMode(0, QHeaderView.Fixed)
         header.resizeSection(0, 50)
         header.setSectionResizeMode(1, QHeaderView.Interactive)
-        header.resizeSection(1, 110)
+        header.resizeSection(1, 100)
         header.setSectionResizeMode(2, QHeaderView.Stretch)
         header.setSectionResizeMode(3, QHeaderView.Fixed)
-        header.resizeSection(3, 105)
+        header.resizeSection(3, 95)
         header.setSectionResizeMode(4, QHeaderView.Fixed)
-        header.resizeSection(4, 90)
+        header.resizeSection(4, 140)
         header.setSectionResizeMode(5, QHeaderView.Fixed)
         header.resizeSection(5, 80)
         header.setSectionResizeMode(6, QHeaderView.Fixed)
@@ -147,7 +166,9 @@ class VideoSelectionDialog(QDialog):
         header.setSectionResizeMode(7, QHeaderView.Fixed)
         header.resizeSection(7, 70)
         header.setSectionResizeMode(8, QHeaderView.Fixed)
-        header.resizeSection(8, 75)
+        header.resizeSection(8, 70)
+        self.title_delegate = ElidedTextDelegate(self.table)
+        self.table.setItemDelegateForColumn(2, self.title_delegate)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.table.setAlternatingRowColors(True)
         self.table.cellDoubleClicked.connect(self.on_row_double_clicked)
@@ -237,6 +258,7 @@ class VideoSelectionDialog(QDialog):
         full = []
         seen_bvids = set()
         show_excluded = self.show_excluded_check.isChecked()
+        show_deleted = self.show_deleted_check.isChecked()
         current_bvids = {item.get("bvid", "") for item in self.current_data if item.get("bvid")}
 
         for v in daily.values():
@@ -249,6 +271,10 @@ class VideoSelectionDialog(QDialog):
                 pass  # 在新数据中出现的已排除视频 → 强制显示，selected=False
             elif not show_excluded and is_excluded:
                 continue  # 不在新数据中的已排除视频 → 按原逻辑隐藏
+
+            is_deleted = v.get("status", "") == "已删除"
+            if not show_deleted and is_deleted and bvid not in current_bvids:
+                continue
 
             seen_bvids.add(bvid)
             full.append({
@@ -275,6 +301,10 @@ class VideoSelectionDialog(QDialog):
 
             is_excluded = item.get("excluded", False)
             if not show_excluded and is_excluded:
+                continue
+
+            is_deleted = item.get("play_tag", "") == "已删除"
+            if not show_deleted and is_deleted:
                 continue
 
             seen_bvids.add(bvid)
@@ -325,8 +355,16 @@ class VideoSelectionDialog(QDialog):
             for c, text in enumerate(cols):
                 ti = QTableWidgetItem(text)
                 self.table.setItem(row_pos, c + 1, ti)
-                if c + 1 != 2:
+                if c + 1 == 2:
+                    ti.setToolTip(text)
+                else:
                     ti.setTextAlignment(Qt.AlignCenter)
+
+            if d.get("play_tag", "") == "已删除":
+                for c in range(self.table.columnCount()):
+                    cell = self.table.item(row_pos, c)
+                    if cell:
+                        cell.setBackground(QColor(255, 230, 230))
 
             row_pos += 1
 
@@ -384,8 +422,10 @@ class VideoSelectionDialog(QDialog):
         daily = load_daily_video_data()
         for item in self.data_list:
             bvid = item.get("source_bvid", "") or item.get("data", {}).get("bvid", "")
-            if bvid and bvid in daily:
-                daily[bvid]["excluded"] = not item.get("selected", True)
+            uid = item.get("data", {}).get("uid", 0)
+            daily_key = f"{uid}_{bvid}"
+            if bvid and daily_key in daily:
+                daily[daily_key]["excluded"] = not item.get("selected", True)
         save_daily_video_data(daily)
 
         self.result_data = [it["data"] for it in self.data_list if it.get("selected", True)]

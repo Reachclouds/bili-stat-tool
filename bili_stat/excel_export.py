@@ -25,14 +25,117 @@ def _cjk_len(s):
     return sum(2 if '一' <= c <= '鿿' or '　' <= c <= '〿' else 1 for c in s)
 
 
-def export_excel(parent, raw_video_data_backup, final_rank_data, enabled_uids=None, settlement_data=None):
+def _render_settlement_sheet(wb, sheet_title, settlement_data, BASE_COL=7):
+    ws = wb.create_sheet(sheet_title)
+    tier_colors = [color for _, _, _, color in RANK_LEVEL_CONFIG]
+    tier_name_font = Font(name='微软雅黑', size=12, bold=True)
+    sub_header_font = Font(name='微软雅黑', size=10, bold=True, color='333333')
+    row = 1
+    tier_results = settlement_data.get("tier_results", [])
+
+    for idx, tr in enumerate(tier_results):
+        color = tier_colors[idx % len(tier_colors)]
+        fill = PatternFill('solid', fgColor=color)
+
+        ws.merge_cells(start_row=row, start_column=BASE_COL, end_row=row, end_column=BASE_COL + 2)
+        tier_cell = ws.cell(row, BASE_COL, f"[{tr['tier_name']}]")
+        tier_cell.font = tier_name_font
+        tier_cell.fill = fill
+        tier_cell.alignment = center_align
+        tier_cell.border = thin_border
+        for c in (BASE_COL + 1, BASE_COL + 2):
+            cell = ws.cell(row, c)
+            cell.fill = fill
+            cell.border = thin_border
+        row += 1
+
+        sub_headers_1 = ["累计播放量", "瓜分奖池", "单人最高瓜分"]
+        for i, h in enumerate(sub_headers_1):
+            cell = ws.cell(row, BASE_COL + i, h)
+            cell.font = sub_header_font
+            cell.fill = fill
+            cell.alignment = center_align
+            cell.border = thin_border
+        row += 1
+
+        vals_1 = [tr["threshold"], tr["pool"], tr["max_per_person"]]
+        for i, val in enumerate(vals_1):
+            cell = ws.cell(row, BASE_COL + i, val)
+            cell.font = content_font
+            cell.fill = fill
+            cell.alignment = center_align
+            cell.border = thin_border
+            if i == 0:
+                cell.number_format = "#,##0"
+            else:
+                cell.number_format = "#,##0.00"
+        row += 1
+
+        sub_headers_2 = ["已达到的作者", "每位作者的播放量", "作者瓜分金额"]
+        for i, h in enumerate(sub_headers_2):
+            cell = ws.cell(row, BASE_COL + i, h)
+            cell.font = sub_header_font
+            cell.fill = fill
+            cell.alignment = center_align
+            cell.border = thin_border
+        row += 1
+
+        for m in tr.get("members", []):
+            detail_vals = [m["nickname"], m["individual_views"], m["actual"]]
+            for i, val in enumerate(detail_vals):
+                cell = ws.cell(row, BASE_COL + i, val)
+                cell.font = content_font
+                cell.fill = fill
+                cell.alignment = center_align
+                cell.border = thin_border
+                if i == 1:
+                    cell.number_format = "#,##0"
+                elif i == 2:
+                    cell.number_format = "#,##0.00"
+            row += 1
+
+        row += 1
+
+    col_widths = {BASE_COL: 22, BASE_COL + 1: 22, BASE_COL + 2: 20}
+    for col, w in col_widths.items():
+        ws.column_dimensions[get_column_letter(col)].width = w
+    ws.freeze_panes = "A2"
+    return ws
+
+
+def _is_in_date_range(pub_time_str, start_date, end_date):
+    """检查视频发布时间是否在日期范围内"""
+    if not start_date or not end_date:
+        return True  # 未指定日期范围，不过滤
+    try:
+        if len(pub_time_str) >= 16:
+            pub_dt = datetime.strptime(pub_time_str[:16], "%Y-%m-%d %H:%M")
+        elif len(pub_time_str) >= 10:
+            pub_dt = datetime.strptime(pub_time_str[:10], "%Y-%m-%d")
+        else:
+            return False
+        start_dt = datetime.combine(start_date, datetime.min.time())
+        end_dt = datetime.combine(end_date, datetime.max.time())
+        return start_dt <= pub_dt <= end_dt
+    except (ValueError, TypeError):
+        return False
+
+
+def export_excel(parent, raw_video_data_backup, final_rank_data, enabled_uids=None,
+                 settlement_data=None, equal_settlement_data=None,
+                 start_date=None, end_date=None):
     if not raw_video_data_backup or not final_rank_data:
         QMessageBox.warning(parent, "提示", "无数据")
         return
 
+    # 构建文件名和Sheet标题
+    date_suffix = ""
+    if start_date and end_date:
+        date_suffix = f"_{start_date.strftime('%Y%m%d')}-{end_date.strftime('%Y%m%d')}"
+
     fp, _ = QFileDialog.getSaveFileName(
         parent, "保存Excel",
-        f"B站7天统计_完整历史数据_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+        f"B站7天统计{date_suffix}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
         "Excel(*.xlsx)"
     )
     if not fp:
@@ -41,9 +144,12 @@ def export_excel(parent, raw_video_data_backup, final_rank_data, enabled_uids=No
     try:
         wb = openpyxl.Workbook()
 
-        # ====================== 【1】视频明细（全部历史） ======================
+        # ====================== 【1】视频明细 ======================
         ws_detail = wb.active
-        ws_detail.title = "视频明细（全部历史）"
+        detail_title = "视频明细"
+        if start_date and end_date:
+            detail_title = f"视频明细（{start_date}~{end_date}）"
+        ws_detail.title = detail_title
 
         headers = ["UP主昵称", "视频标题", "BV号", "发布时间", "7天播放量", "统计天数", "统计状态", "共创角色"]
         for col, h in enumerate(headers, 1):
@@ -61,6 +167,8 @@ def export_excel(parent, raw_video_data_backup, final_rank_data, enabled_uids=No
             if v.get("excluded", False):
                 continue
             if enabled_uids is not None and v.get("uid", 0) not in enabled_uids:
+                continue
+            if not _is_in_date_range(v.get("pub_time", ""), start_date, end_date):
                 continue
             if v.get("status") == "已结算" and "final_play" in v:
                 bvid = v.get("bvid")
@@ -81,8 +189,16 @@ def export_excel(parent, raw_video_data_backup, final_rank_data, enabled_uids=No
         for video in raw_video_data_backup:
             if video.get("excluded", False):
                 continue
+            if enabled_uids is not None and video.get("uid", 0) not in enabled_uids:
+                continue
+            # 交叉校验 daily_data 中的 excluded 标记（筛选后可能已更新）
+            bvid = video.get("bvid", "")
+            uid = video.get("uid", 0)
+            if bvid and daily_data.get(f"{uid}_{bvid}", {}).get("excluded", False):
+                continue
+            if not _is_in_date_range(video.get("pub_time", ""), start_date, end_date):
+                continue
             if video.get("play_tag") == "统计中":
-                bvid = video.get("bvid")
                 if bvid and bvid not in seen_bvids:
                     seen_bvids.add(bvid)
                     full_video_list.append({
@@ -94,6 +210,29 @@ def export_excel(parent, raw_video_data_backup, final_rank_data, enabled_uids=No
                         "stat_days": video.get("stat_days", 0),
                         "play_tag": video.get("play_tag", "统计中"),
                         "collab_role": video.get("collab_role", ""),
+                    })
+
+        # 兜底：daily_data 中的"统计中"视频（raw_video_data_backup 不完整时补充）
+        for v in daily_data.values():
+            if v.get("excluded", False):
+                continue
+            if enabled_uids is not None and v.get("uid", 0) not in enabled_uids:
+                continue
+            if not _is_in_date_range(v.get("pub_time", ""), start_date, end_date):
+                continue
+            if v.get("status") == "统计中":
+                bvid = v.get("bvid")
+                if bvid and bvid not in seen_bvids:
+                    seen_bvids.add(bvid)
+                    full_video_list.append({
+                        "nickname": v.get("nickname", ""),
+                        "title": v.get("title", ""),
+                        "bvid": bvid,
+                        "pub_time": v.get("pub_time", ""),
+                        "current_play": v.get("final_play", 0),
+                        "stat_days": v.get("stat_days", 0),
+                        "play_tag": "统计中",
+                        "collab_role": v.get("collab_role", ""),
                     })
 
         full_video_list.sort(key=lambda x: x["pub_time"], reverse=True)
@@ -137,8 +276,11 @@ def export_excel(parent, raw_video_data_backup, final_rank_data, enabled_uids=No
             ws_detail.column_dimensions[letter].width = width
         ws_detail.freeze_panes = "A2"
 
-        # ====================== 【2】UP主整体排名（全部历史） ======================
-        ws_rank = wb.create_sheet("UP主整体排名")
+        # ====================== 【2】UP主整体排名 ======================
+        rank_title = "UP主整体排名"
+        if start_date and end_date:
+            rank_title = f"UP主排名（{start_date}~{end_date}）"
+        ws_rank = wb.create_sheet(rank_title)
 
         rank_headers = ["档位", "排名", "UP主昵称", "UID", "7天总播放量（整体）", "视频数量"]
         for col, h in enumerate(rank_headers, 1):
@@ -154,6 +296,8 @@ def export_excel(parent, raw_video_data_backup, final_rank_data, enabled_uids=No
                 continue
             if enabled_uids is not None and v.get("uid", 0) not in enabled_uids:
                 continue
+            if not _is_in_date_range(v.get("pub_time", ""), start_date, end_date):
+                continue
             if v.get("status") == "已结算" and "final_play" in v:
                 uid = v.get("uid")
                 if uid:
@@ -166,12 +310,45 @@ def export_excel(parent, raw_video_data_backup, final_rank_data, enabled_uids=No
         for video in raw_video_data_backup:
             if video.get("excluded", False):
                 continue
+            if enabled_uids is not None and video.get("uid", 0) not in enabled_uids:
+                continue
+            if not _is_in_date_range(video.get("pub_time", ""), start_date, end_date):
+                continue
             if video.get("play_tag") == "统计中":
                 uid = video.get("uid", 0)
+                bvid = video.get("bvid", "")
+                # 交叉校验 daily_data 中的 excluded 标记（筛选后可能已更新）
+                if bvid and uid and daily_data.get(f"{uid}_{bvid}", {}).get("excluded", False):
+                    continue
                 if uid:
                     if uid not in ongoing_map:
                         ongoing_map[uid] = {"nickname": video["nickname"], "uid": uid, "total_play": 0, "video_count": 0}
                     ongoing_map[uid]["total_play"] += video.get("current_play", 0)
+                    ongoing_map[uid]["video_count"] += 1
+
+        # 兜底：daily_data 中的"统计中"视频（raw_video_data_backup 不完整时补充）
+        ongoing_bvids = set()
+        for video in raw_video_data_backup:
+            if video.get("play_tag") == "统计中":
+                b = video.get("bvid", "")
+                if b:
+                    ongoing_bvids.add(b)
+        for v in daily_data.values():
+            if v.get("excluded", False):
+                continue
+            if enabled_uids is not None and v.get("uid", 0) not in enabled_uids:
+                continue
+            if not _is_in_date_range(v.get("pub_time", ""), start_date, end_date):
+                continue
+            if v.get("status") == "统计中":
+                bvid = v.get("bvid")
+                if bvid and bvid in ongoing_bvids:
+                    continue  # raw_video_data_backup 已有，不重复计数
+                uid = v.get("uid", 0)
+                if uid:
+                    if uid not in ongoing_map:
+                        ongoing_map[uid] = {"nickname": v["nickname"], "uid": uid, "total_play": 0, "video_count": 0}
+                    ongoing_map[uid]["total_play"] += v.get("final_play", 0)
                     ongoing_map[uid]["video_count"] += 1
 
         merged_map = settled_map.copy()
@@ -261,98 +438,26 @@ def export_excel(parent, raw_video_data_backup, final_rank_data, enabled_uids=No
 
         # ====================== 【3】奖池结算 ======================
         if settlement_data:
-            ws_st = wb.create_sheet("奖池结算")
+            _render_settlement_sheet(wb, "奖池结算", settlement_data)
 
-            BASE_COL = 7  # 从 G 列开始居中
-
-            tier_colors = [color for _, _, _, color in RANK_LEVEL_CONFIG]
-            tier_name_font = Font(name='微软雅黑', size=12, bold=True)
-            sub_header_font = Font(name='微软雅黑', size=10, bold=True, color='333333')
-            row = 1
-            tier_results = settlement_data.get("tier_results", [])
-
-            for idx, tr in enumerate(tier_results):
-                color = tier_colors[idx % len(tier_colors)]
-                fill = PatternFill('solid', fgColor=color)
-
-                # ── 档位名称行 ──
-                ws_st.merge_cells(start_row=row, start_column=BASE_COL, end_row=row, end_column=BASE_COL + 2)
-                tier_cell = ws_st.cell(row, BASE_COL, f"[{tr['tier_name']}]")
-                tier_cell.font = tier_name_font
-                tier_cell.fill = fill
-                tier_cell.alignment = center_align
-                tier_cell.border = thin_border
-                for c in (BASE_COL + 1, BASE_COL + 2):
-                    cell = ws_st.cell(row, c)
-                    cell.fill = fill
-                    cell.border = thin_border
-                row += 1
-
-                # ── 子表头行1：累计播放量 | 瓜分奖池 | 单人最高瓜分 ──
-                sub_headers_1 = ["累计播放量", "瓜分奖池", "单人最高瓜分"]
-                for i, h in enumerate(sub_headers_1):
-                    cell = ws_st.cell(row, BASE_COL + i, h)
-                    cell.font = sub_header_font
-                    cell.fill = fill
-                    cell.alignment = center_align
-                    cell.border = thin_border
-                row += 1
-
-                # ── 数值行 ──
-                vals_1 = [tr["threshold"], tr["pool"], tr["max_per_person"]]
-                for i, val in enumerate(vals_1):
-                    cell = ws_st.cell(row, BASE_COL + i, val)
-                    cell.font = content_font
-                    cell.fill = fill
-                    cell.alignment = center_align
-                    cell.border = thin_border
-                    if i == 0:
-                        cell.number_format = "#,##0"
-                    else:
-                        cell.number_format = "#,##0.00"
-                row += 1
-
-                # ── 子表头行2：已达到的作者 | 每位作者的播放量 | 作者瓜分金额 ──
-                sub_headers_2 = ["已达到的作者", "每位作者的播放量", "作者瓜分金额"]
-                for i, h in enumerate(sub_headers_2):
-                    cell = ws_st.cell(row, BASE_COL + i, h)
-                    cell.font = sub_header_font
-                    cell.fill = fill
-                    cell.alignment = center_align
-                    cell.border = thin_border
-                row += 1
-
-                # ── 作者明细行 ──
-                for m in tr.get("members", []):
-                    detail_vals = [m["nickname"], m["individual_views"], m["actual"]]
-                    for i, val in enumerate(detail_vals):
-                        cell = ws_st.cell(row, BASE_COL + i, val)
-                        cell.font = content_font
-                        cell.fill = fill
-                        cell.alignment = center_align
-                        cell.border = thin_border
-                        if i == 1:
-                            cell.number_format = "#,##0"
-                        elif i == 2:
-                            cell.number_format = "#,##0.00"
-                    row += 1
-
-                # ── 档位间空行 ──
-                row += 1
-
-            col_widths = {BASE_COL: 22, BASE_COL + 1: 22, BASE_COL + 2: 20}
-            for col, w in col_widths.items():
-                ws_st.column_dimensions[get_column_letter(col)].width = w
-            ws_st.freeze_panes = "A2"
+        # ====================== 【4】平分奖池 ======================
+        if equal_settlement_data:
+            _render_settlement_sheet(wb, "平分奖池", equal_settlement_data)
 
         # ====================== 保存 ======================
         wb.save(fp)
-        sheet_names = "· 视频明细（全部历史）\n· UP主整体排名（全部历史）"
+        date_info = ""
+        if start_date and end_date:
+            date_info = f"（{start_date}~{end_date}）"
+        sheet_names = f"· 视频明细{date_info}\n· UP主排名{date_info}"
         if settlement_data:
             sheet_names += "\n· 奖池结算"
+        if equal_settlement_data:
+            sheet_names += "\n· 平分奖池"
         QMessageBox.information(
             parent, "导出成功",
-            f"✅ 已导出完整历史统计数据！\n\n"
+            f"✅ 已导出统计数据！\n\n"
+            f"日期范围：{start_date}~{end_date}\n\n"
             f"{sheet_names}\n\n"
             f"文件已保存至：\n{fp}"
         )

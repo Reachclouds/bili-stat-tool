@@ -65,14 +65,71 @@ def load_daily_video_data():
         try:
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                for bvid, v in data.items():
+                migrated = {}
+                needs_migration = False
+                for key, v in data.items():
                     if "excluded" not in v:
                         v["excluded"] = False
                     if "is_collaborative" not in v:
                         v["is_collaborative"] = False
                     if "collab_role" not in v:
                         v["collab_role"] = ""
-                return data
+                    # 向后兼容：旧格式 key 为纯 bvid，迁移为 uid_bvid
+                    uid = v.get("uid", 0)
+                    bvid = v.get("bvid", key)
+                    new_key = f"{uid}_{bvid}"
+                    if new_key != key:
+                        needs_migration = True
+                    migrated[new_key] = v
+                if needs_migration:
+                    save_daily_video_data(migrated)
+                return migrated
         except:
             return {}
     return {}
+
+
+# ====================== 统计进度 断点续传 ======================
+def get_progress_path():
+    return os.path.join(get_app_data_dir(), "stat_progress.json")
+
+
+def save_stat_progress(completed_uids, start_date, end_date):
+    path = get_progress_path()
+    data = {
+        "completed_uids": list(completed_uids),
+        "start_date": start_date.date().isoformat() if hasattr(start_date, 'date') else str(start_date),
+        "end_date": end_date.date().isoformat() if hasattr(end_date, 'date') else str(end_date),
+        "timestamp": datetime.now().isoformat(),
+    }
+    temp_path = path + ".tmp"
+    try:
+        with open(temp_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        if os.path.exists(path):
+            os.replace(temp_path, path)
+        else:
+            os.rename(temp_path, path)
+    except Exception:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+
+
+def load_stat_progress():
+    path = get_progress_path()
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except:
+        return None
+
+
+def clear_stat_progress():
+    path = get_progress_path()
+    if os.path.exists(path):
+        try:
+            os.remove(path)
+        except:
+            pass

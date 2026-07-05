@@ -208,3 +208,115 @@ def calculate_settlement(tiers, up_play_data):
         "unassigned": unassigned,
         "settlement_time": datetime.now(TIMEZONE_CN).strftime("%Y-%m-%d %H:%M:%S"),
     }
+
+
+def calculate_equal_settlement(tiers, up_play_data):
+    """执行平分奖池结算算法。
+
+    档位归属与 calculate_settlement 相同，但每个档位内均分奖池：
+    per_person = min(pool / qualified_count, max_per_person)
+    """
+    sorted_tiers = sorted(tiers, key=lambda t: (-t["threshold"], t.get("sort_order", 0)))
+    up_list = sorted(up_play_data.items(), key=lambda x: -x[1]["total_views"])
+
+    tier_members = {t["name"]: [] for t in sorted_tiers}
+    assigned = set()
+    for uid, info in up_list:
+        views = info["total_views"]
+        for t in sorted_tiers:
+            if views >= t["threshold"]:
+                tier_members[t["name"]].append({
+                    "uid": uid,
+                    "nickname": info["nickname"],
+                    "individual_views": views,
+                })
+                assigned.add(uid)
+                break
+
+    tier_results = []
+    for t in sorted_tiers:
+        members = tier_members[t["name"]]
+        qualified_count = len(members)
+        total_qualified_views = sum(m["individual_views"] for m in members)
+
+        pool = t["pool"]
+        max_per = t["max_per_person"]
+        distributed = 0.0
+        overflow = 0.0
+
+        equal_share = pool / qualified_count if qualified_count > 0 else 0.0
+
+        for m in members:
+            if equal_share > max_per:
+                actual = max_per
+                m["capped"] = True
+                overflow += (equal_share - actual)
+            else:
+                actual = equal_share
+                m["capped"] = False
+
+            m["ratio"] = 1.0 / qualified_count if qualified_count > 0 else 0.0
+            m["estimated"] = round(equal_share, 2)
+            m["actual"] = round(actual, 2)
+            distributed += actual
+
+        remaining_pool = round(pool - distributed - overflow, 2)
+        overflow = round(overflow, 2)
+
+        tier_results.append({
+            "tier_name": t["name"],
+            "threshold": t["threshold"],
+            "pool": pool,
+            "max_per_person": max_per,
+            "qualified_count": qualified_count,
+            "total_qualified_views": total_qualified_views,
+            "members": members,
+            "overflow": overflow,
+            "remaining_pool": remaining_pool,
+            "total_distributed": round(distributed, 2),
+        })
+
+    unassigned = []
+    for uid, info in up_list:
+        if uid not in assigned:
+            unassigned.append({
+                "uid": uid,
+                "nickname": info["nickname"],
+                "individual_views": info["total_views"],
+            })
+
+    return {
+        "tier_results": tier_results,
+        "unassigned": unassigned,
+        "settlement_time": datetime.now(TIMEZONE_CN).strftime("%Y-%m-%d %H:%M:%S"),
+        "settlement_mode": "equal",
+    }
+
+
+# ====================== 平分奖池结算结果 持久化 ======================
+EQUAL_SETTLEMENT_RESULT_FILE = os.path.join(get_app_data_dir(), "equal_settlement_result.json")
+
+
+def load_equal_settlement_result():
+    if os.path.exists(EQUAL_SETTLEMENT_RESULT_FILE):
+        try:
+            with open(EQUAL_SETTLEMENT_RESULT_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except:
+            pass
+    return None
+
+
+def save_equal_settlement_result(result):
+    temp_path = EQUAL_SETTLEMENT_RESULT_FILE + ".tmp"
+    try:
+        with open(temp_path, "w", encoding="utf-8") as f:
+            json.dump(result, f, ensure_ascii=False, indent=2)
+        if os.path.exists(EQUAL_SETTLEMENT_RESULT_FILE):
+            os.replace(temp_path, EQUAL_SETTLEMENT_RESULT_FILE)
+        else:
+            os.rename(temp_path, EQUAL_SETTLEMENT_RESULT_FILE)
+    except Exception:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+        raise

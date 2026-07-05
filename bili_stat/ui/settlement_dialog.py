@@ -9,21 +9,26 @@ from PyQt5.QtCore import QDate, Qt
 
 from ..settlement import (load_settlement_config, save_settlement_config,
                           load_settlement_result, save_settlement_result,
-                          calculate_settlement, aggregate_up_views,
-                          _default_config)
+                          load_equal_settlement_result, save_equal_settlement_result,
+                          calculate_settlement, calculate_equal_settlement,
+                          aggregate_up_views, _default_config)
 from ..storage import load_daily_video_data
 from ..config import TIMEZONE_CN
 from .styles import MAIN_STYLE
 
 
 class SettlementDialog(QDialog):
-    def __init__(self, raw_video_data_backup, default_start_date, default_end_date, parent=None):
+    def __init__(self, raw_video_data_backup, default_start_date, default_end_date,
+                 parent=None, mode="proportional", enabled_uids=None):
         super().__init__(parent)
         self.raw_video_data_backup = raw_video_data_backup or []
         self.tier_config = load_settlement_config()
         self.settlement_result = None
+        self.mode = mode
+        self.enabled_uids = enabled_uids
 
-        self.setWindowTitle("奖池结算")
+        title = "奖池结算" if mode == "proportional" else "平分奖池结算"
+        self.setWindowTitle(title)
         self.setMinimumSize(1100, 750)
         self.setStyleSheet(MAIN_STYLE)
         self._setup_ui(default_start_date, default_end_date)
@@ -303,10 +308,15 @@ class SettlementDialog(QDialog):
         # UP主结算明细表
         total_rows = sum(len(tr["members"]) for tr in tier_results)
         self.detail_table.setRowCount(total_rows)
+        is_equal = result.get("settlement_mode") == "equal"
         row = 0
         for tr in tier_results:
             for m in tr["members"]:
-                ratio_str = f"{m['ratio'] * 100:.1f}%" if m["ratio"] else "0.0%"
+                if is_equal:
+                    qc = tr["qualified_count"]
+                    ratio_str = f"1/{qc}" if qc > 0 else "0"
+                else:
+                    ratio_str = f"{m['ratio'] * 100:.1f}%" if m["ratio"] else "0.0%"
                 values = [
                     tr["tier_name"], m["nickname"], str(m["uid"]),
                     str(m["individual_views"]), ratio_str,
@@ -331,9 +341,12 @@ class SettlementDialog(QDialog):
         seen = set()
 
         # 先加入历史已结算数据
-        for bvid, v in daily_data.items():
+        for key, v in daily_data.items():
             if v.get("excluded", False):
                 continue
+            if self.enabled_uids is not None and v.get("uid", 0) not in self.enabled_uids:
+                continue
+            bvid = v.get("bvid", key)
             if v.get("status") == "已结算":
                 merged.append({
                     "uid": v.get("uid", 0),
@@ -349,13 +362,19 @@ class SettlementDialog(QDialog):
             for v in self.raw_video_data_backup:
                 if v.get("excluded", False):
                     continue
+                if self.enabled_uids is not None and v.get("uid", 0) not in self.enabled_uids:
+                    continue
                 bvid = v.get("bvid", "")
+                uid = v.get("uid", 0)
+                # 交叉校验 daily_data 中的 excluded 标记（筛选后可能已更新）
+                if bvid and uid and daily_data.get(f"{uid}_{bvid}", {}).get("excluded", False):
+                    continue
                 if bvid and bvid in seen:
                     continue
                 if bvid:
                     seen.add(bvid)
                 merged.append({
-                    "uid": v.get("uid", 0),
+                    "uid": uid,
                     "nickname": v.get("nickname", ""),
                     "current_play": v.get("current_play", 0),
                     "pub_time": v.get("pub_time", ""),
@@ -363,9 +382,12 @@ class SettlementDialog(QDialog):
                 })
 
             # 补充：daily_data 中的"统计中"视频（本次未统计到的UP主，使用最近一次快照数据）
-            for bvid, v in daily_data.items():
+            for key, v in daily_data.items():
                 if v.get("excluded", False):
                     continue
+                if self.enabled_uids is not None and v.get("uid", 0) not in self.enabled_uids:
+                    continue
+                bvid = v.get("bvid", key)
                 if bvid in seen:
                     continue
                 if v.get("status") == "统计中":
@@ -407,7 +429,10 @@ class SettlementDialog(QDialog):
             self._clear_preview()
             return
 
-        result = calculate_settlement(tiers, up_data)
+        if self.mode == "equal":
+            result = calculate_equal_settlement(tiers, up_data)
+        else:
+            result = calculate_settlement(tiers, up_data)
         self._populate_preview(result)
         self.tab_widget.setCurrentIndex(1)
 
@@ -430,9 +455,15 @@ class SettlementDialog(QDialog):
             QMessageBox.warning(self, "提示", "所选日期范围内无有效视频数据，无法应用结算")
             return
 
-        result = calculate_settlement(tiers, up_data)
-        save_settlement_config(tiers)
-        save_settlement_result(result)
+        if self.mode == "equal":
+            result = calculate_equal_settlement(tiers, up_data)
+            save_settlement_config(tiers)
+            save_equal_settlement_result(result)
+        else:
+            result = calculate_settlement(tiers, up_data)
+            save_settlement_config(tiers)
+            save_settlement_result(result)
         self.settlement_result = result
-        QMessageBox.information(self, "提示", "奖池结算已应用生效！\n配置和结果已保存，可导出Excel查看明细。")
+        mode_name = "平分奖池" if self.mode == "equal" else "奖池"
+        QMessageBox.information(self, "提示", f"{mode_name}结算已应用生效！\n配置和结果已保存，可导出Excel查看明细。")
         self.accept()

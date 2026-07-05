@@ -12,11 +12,11 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QH
                              QGroupBox, QSplitter, QDialog, QCheckBox, QListWidget,
                              QListWidgetItem, QMenu, QAction, QAbstractItemView)
 from PyQt5.QtCore import QDate, Qt
-from PyQt5.QtGui import QFont
+from PyQt5.QtGui import QFont, QColor
 
 from ..config import (get_app_data_dir, SESSDATA, BILI_JCT, BUVID3, DEDEUSERID,
                       AC_TIME_VALUE, MAX_UP_COUNT, CONFIG_FILE, TIMEZONE_CN)
-from ..storage import save_daily_video_data, load_daily_video_data, get_daily_data_path
+from ..storage import save_daily_video_data, load_daily_video_data, get_daily_data_path, load_stat_progress, clear_stat_progress
 from ..api import StatThread
 from ..excel_export import export_excel
 from .styles import MAIN_STYLE
@@ -30,7 +30,11 @@ class BiliStatTool(QMainWindow):
         self.stat_thread = None
         self.final_rank_data = []
         self.raw_video_data_backup = []
+        self.raw_video_data_full = []  # 筛选前的完整备份，用于导出恢复
+        self.stat_start_date = None
+        self.stat_end_date = None
         self.settlement_result = None
+        self.equal_settlement_result = None
         self.init_ui()
         self.load_up_list()
 
@@ -146,6 +150,12 @@ class BiliStatTool(QMainWindow):
         self.stb2.clicked.connect(self.open_settlement_dialog)
         self.stb2.setEnabled(False)
         ttl.addWidget(self.stb2)
+
+        self.stb3 = QPushButton("平分奖池")
+        self.stb3.setFixedSize(120, 34)
+        self.stb3.clicked.connect(self.open_equal_settlement_dialog)
+        self.stb3.setEnabled(False)
+        ttl.addWidget(self.stb3)
         dal.addLayout(ttl)
 
         self.vt = QTableWidget()
@@ -331,21 +341,57 @@ class BiliStatTool(QMainWindow):
         now = datetime.now(tz=TIMEZONE_CN)
         if edt_full > now:
             edt_full = now
-        self.vt.setRowCount(0)
-        self.logt.clear()
+
+        resume_uids = []
+        progress = load_stat_progress()
+        if progress:
+            prog_start = progress.get("start_date", "")
+            prog_end = progress.get("end_date", "")
+            # 用调整后的日期比较，和保存时使用的日期一致
+            current_start = sdt_full.date().isoformat()
+            current_end = edt_full.date().isoformat()
+            if prog_start == current_start and prog_end == current_end:
+                completed = progress.get("completed_uids", [])
+                total = len(enabled_up_list)
+                remaining = total - len([u for u in enabled_up_list if int(u["uid"]) in set(completed)])
+                reply = QMessageBox.question(
+                    self, "检测到未完成的统计",
+                    f"上次统计中断，已完成 {len(completed)}/{total} 个UP主，"
+                    f"还剩 {remaining} 个。\n\n"
+                    f"是否继续上次统计？\n（选\"否\"将重新开始）",
+                    QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel,
+                    QMessageBox.Yes
+                )
+                if reply == QMessageBox.Cancel:
+                    return
+                elif reply == QMessageBox.Yes:
+                    resume_uids = [int(uid) for uid in completed]
+                else:
+                    clear_stat_progress()
+            else:
+                clear_stat_progress()
+
+        if not resume_uids:
+            self.vt.setRowCount(0)
+            self.logt.clear()
+        self.stat_start_date = sdt
+        self.stat_end_date = edt
         self.settlement_result = None
+        self.equal_settlement_result = None
         self.exb.setEnabled(False)
         self.fib.setEnabled(False)
         self.stb2.setEnabled(False)
+        self.stb3.setEnabled(False)
         self.stb.setEnabled(False)
         self.spb.setEnabled(True)
 
         self.stat_thread = StatThread(enabled_up_list, sdt_full, edt_full, SESSDATA, BILI_JCT, BUVID3, DEDEUSERID,
-                                      AC_TIME_VALUE)
+                                      AC_TIME_VALUE, resume_uids=resume_uids)
         self.stat_thread.log_signal.connect(self.log)
         self.stat_thread.table_signal.connect(self.refresh_table)
         self.stat_thread.finish_signal.connect(self.stat_finish)
         self.stat_thread.error_signal.connect(self.log)
+        self.stat_thread.auto_pause_signal.connect(self.on_auto_pause)
         self.stat_thread.start()
 
     def stop_stat(self):
@@ -353,6 +399,13 @@ class BiliStatTool(QMainWindow):
             self.stat_thread.requestInterruption()
             self.stat_thread.wait(2000)
             self.log("已停止")
+        self.stb.setEnabled(True)
+        self.spb.setEnabled(False)
+
+    def on_auto_pause(self, reason):
+        self.log("⚠️ 统计已自动暂停（网络异常），进度已保存")
+        self.log(f"  原因：{reason}")
+        self.log("  点击\"开始统计\"可从断点继续")
         self.stb.setEnabled(True)
         self.spb.setEnabled(False)
 
@@ -366,11 +419,18 @@ class BiliStatTool(QMainWindow):
                 self.vt.setItem(row, col, table_item)
                 if col != 1:
                     table_item.setTextAlignment(Qt.AlignCenter)
+            if item.get("play_tag") == "已删除":
+                for c in range(len(keys)):
+                    cell = self.vt.item(row, c)
+                    if cell:
+                        cell.setBackground(QColor(255, 230, 230))
         self.vt.scrollToBottom()
 
     def stat_finish(self, rank_data):
+        clear_stat_progress()
         self.final_rank_data = rank_data
         self.raw_video_data_backup = []
+        self.raw_video_data_full = []  # 重新统计后清空旧的完整备份
         daily = load_daily_video_data()
         for row in range(self.vt.rowCount()):
             data = {}
@@ -394,8 +454,10 @@ class BiliStatTool(QMainWindow):
                 data["current_play"] = 0
                 data["stat_days"] = 0
             bvid = data.get("bvid", "")
-            data["excluded"] = daily.get(bvid, {}).get("excluded", False)
+            data["excluded"] = daily.get(f"{data.get('uid', 0)}_{bvid}", {}).get("excluded", False)
             self.raw_video_data_backup.append(data)
+
+        self.raw_video_data_full = self.raw_video_data_backup[:]
 
         self.log("\n===== 统计完成 =====")
         self.log("✅ 已结算视频：数据永久锁定")
@@ -407,6 +469,7 @@ class BiliStatTool(QMainWindow):
         self.exb.setEnabled(True)
         self.fib.setEnabled(True)
         self.stb2.setEnabled(True)
+        self.stb3.setEnabled(True)
         QMessageBox.information(self, "完成", "统计完成！\n已结算视频锁定，统计中视频次日更新")
         backup_dir = os.path.join(get_app_data_dir(), "backups")
         os.makedirs(backup_dir, exist_ok=True)
@@ -417,12 +480,116 @@ class BiliStatTool(QMainWindow):
         except Exception as e:
             self.log(f"⚠️ 备份失败：{str(e)}")
 
+    def _get_settlement_video_data(self, enabled_uids=None):
+        """获取用于结算的视频数据（合并daily_data和raw_video_data_backup）"""
+        daily = load_daily_video_data()
+        merged = []
+        seen = set()
+
+        # 从daily_data读取"已结算"视频
+        for key, v in daily.items():
+            if v.get("excluded", False):
+                continue
+            if enabled_uids is not None and v.get("uid", 0) not in enabled_uids:
+                continue
+            bvid = v.get("bvid", key)
+            if v.get("status") == "已结算":
+                merged.append({
+                    "uid": v.get("uid", 0),
+                    "nickname": v.get("nickname", ""),
+                    "current_play": v.get("final_play", 0),
+                    "pub_time": v.get("pub_time", ""),
+                    "excluded": False,
+                })
+                seen.add(bvid)
+
+        # 从raw_video_data_backup读取视频（含"统计中"和"已结算"）
+        for v in self.raw_video_data_backup:
+            if v.get("excluded", False):
+                continue
+            if enabled_uids is not None and v.get("uid", 0) not in enabled_uids:
+                continue
+            bvid = v.get("bvid", "")
+            uid = v.get("uid", 0)
+            # 交叉校验 daily_data 中的 excluded 标记（筛选后可能已更新）
+            if bvid and uid and daily.get(f"{uid}_{bvid}", {}).get("excluded", False):
+                continue
+            if bvid and bvid in seen:
+                continue
+            if bvid:
+                seen.add(bvid)
+            merged.append({
+                "uid": uid,
+                "nickname": v.get("nickname", ""),
+                "current_play": v.get("current_play", 0),
+                "pub_time": v.get("pub_time", ""),
+                "excluded": False,
+            })
+
+        # 补充daily_data中的"统计中"视频（本次未统计到的UP主）
+        for key, v in daily.items():
+            if v.get("excluded", False):
+                continue
+            if enabled_uids is not None and v.get("uid", 0) not in enabled_uids:
+                continue
+            bvid = v.get("bvid", key)
+            if bvid in seen:
+                continue
+            if v.get("status") == "统计中":
+                merged.append({
+                    "uid": v.get("uid", 0),
+                    "nickname": v.get("nickname", ""),
+                    "current_play": v.get("final_play", 0),
+                    "pub_time": v.get("pub_time", ""),
+                    "excluded": False,
+                })
+                seen.add(bvid)
+
+        return merged
+
     def export_excel(self):
         enabled_uids = {int(u["uid"]) for u in self.up_list if u.get("enabled", True)}
+        # 使用统计时的日期范围，而非当前日期选择器值（防止用户误改导致数据丢失）
+        sdt = self.stat_start_date if self.stat_start_date else self.sd.date().toPyDate()
+        edt = self.stat_end_date if self.stat_end_date else self.ed.date().toPyDate()
+
+        # 自动计算奖池结算（如果未手动执行过）
+        settlement_result = self.settlement_result
+        equal_result = self.equal_settlement_result
+
+        if settlement_result is None or equal_result is None:
+            from ..settlement import (load_settlement_config, aggregate_up_views,
+                                      calculate_settlement, calculate_equal_settlement,
+                                      save_settlement_result, save_equal_settlement_result)
+            from datetime import datetime
+            from ..config import TIMEZONE_CN
+
+            start_dt = datetime.combine(sdt, datetime.min.time(), tzinfo=TIMEZONE_CN)
+            end_dt = datetime.combine(edt, datetime.max.time(), tzinfo=TIMEZONE_CN)
+
+            tiers = load_settlement_config()
+            merged_data = self._get_settlement_video_data(enabled_uids)
+            up_data = aggregate_up_views(merged_data, start_dt, end_dt)
+
+            if up_data:
+                if settlement_result is None:
+                    settlement_result = calculate_settlement(tiers, up_data)
+                    save_settlement_result(settlement_result)
+                    self.settlement_result = settlement_result
+                    self.log("📊 已自动计算奖池结算")
+
+                if equal_result is None:
+                    equal_result = calculate_equal_settlement(tiers, up_data)
+                    save_equal_settlement_result(equal_result)
+                    self.equal_settlement_result = equal_result
+                    self.log("📊 已自动计算平分奖池")
+
         fp = export_excel(self, self.raw_video_data_backup, self.final_rank_data,
-                          enabled_uids=enabled_uids, settlement_data=self.settlement_result)
+                          enabled_uids=enabled_uids, settlement_data=settlement_result,
+                          equal_settlement_data=equal_result,
+                          start_date=sdt, end_date=edt)
         if fp:
-            self.log(f"✅ 导出完整历史数据成功：{fp}")
+            self.log(f"✅ 导出数据成功：{fp}")
 
     def open_filter_dialog(self):
         if not self.raw_video_data_backup:
@@ -458,6 +625,8 @@ class BiliStatTool(QMainWindow):
             for i, item in enumerate(ranked, 1):
                 item["rank"] = i
             self.final_rank_data = ranked
+            self.settlement_result = None
+            self.equal_settlement_result = None
 
             self.log(f"\n===== 筛选完成 =====")
             self.log(f"已保留 {len(filtered)} 个视频")
@@ -470,18 +639,40 @@ class BiliStatTool(QMainWindow):
             QMessageBox.warning(self, "提示", "暂无统计数据，请先运行统计")
             return
         from .settlement_dialog import SettlementDialog
-        sdt = self.sd.date().toPyDate()
-        edt = self.ed.date().toPyDate()
+        # 使用统计时的日期范围，而非当前日期选择器值（防止用户误改导致数据不一致）
+        sdt = self.stat_start_date if self.stat_start_date else self.sd.date().toPyDate()
+        edt = self.stat_end_date if self.stat_end_date else self.ed.date().toPyDate()
+        enabled_uids = {int(u["uid"]) for u in self.up_list if u.get("enabled", True)}
         dialog = SettlementDialog(
             self.raw_video_data_backup,
             datetime.combine(sdt, datetime.min.time(), tzinfo=TIMEZONE_CN),
             datetime.combine(edt, datetime.max.time(), tzinfo=TIMEZONE_CN),
-            self
+            self, enabled_uids=enabled_uids
         )
         if dialog.exec_() == QDialog.Accepted:
             if dialog.settlement_result:
                 self.settlement_result = dialog.settlement_result
                 self.log("✅ 奖池结算结果已保存")
+
+    def open_equal_settlement_dialog(self):
+        if not self.raw_video_data_backup:
+            QMessageBox.warning(self, "提示", "暂无统计数据，请先运行统计")
+            return
+        from .settlement_dialog import SettlementDialog
+        # 使用统计时的日期范围，而非当前日期选择器值（防止用户误改导致数据不一致）
+        sdt = self.stat_start_date if self.stat_start_date else self.sd.date().toPyDate()
+        edt = self.stat_end_date if self.stat_end_date else self.ed.date().toPyDate()
+        enabled_uids = {int(u["uid"]) for u in self.up_list if u.get("enabled", True)}
+        dialog = SettlementDialog(
+            self.raw_video_data_backup,
+            datetime.combine(sdt, datetime.min.time(), tzinfo=TIMEZONE_CN),
+            datetime.combine(edt, datetime.max.time(), tzinfo=TIMEZONE_CN),
+            self, mode="equal", enabled_uids=enabled_uids
+        )
+        if dialog.exec_() == QDialog.Accepted:
+            if dialog.settlement_result:
+                self.equal_settlement_result = dialog.settlement_result
+                self.log("✅ 平分奖池结算结果已保存")
 
     def log(self, text):
         self.logt.append(f"[{datetime.now().strftime('%H:%M:%S')}] {text}")
